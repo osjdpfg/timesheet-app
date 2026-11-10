@@ -1,14 +1,15 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                                 QPushButton, QComboBox, QTableWidget,
                                 QTableWidgetItem, QColorDialog, QMessageBox,
-                                QInputDialog)
+                                QInputDialog, QGroupBox, QGridLayout)
 from PySide6.QtGui import QColor
 from PySide6.QtCore import Qt
 from ...services.settings_service import (list_years, add_year, delete_year,
                                            update_month, get_year_month,
-                                           get_setting, set_setting)
+                                           get_setting, set_setting,
+                                           get_all_colors, set_code_color)
 from ...config import MONTHS_RU
-
+from ...core.designations import DESIGNATIONS
 
 class SettingsTab(QWidget):
     def __init__(self):
@@ -37,14 +38,10 @@ class SettingsTab(QWidget):
         self.hour_mode.currentIndexChanged.connect(self.save_hour_mode)
         top.addWidget(self.hour_mode)
 
-        top.addSpacing(20)
-        btn_color = QPushButton("Цвет выходных")
-        btn_color.clicked.connect(self.pick_color)
-        top.addWidget(btn_color)
-
         top.addStretch()
         lay.addLayout(top)
 
+        # Таблица месяцев
         self.table = QTableWidget(12, 3)
         self.table.setHorizontalHeaderLabels(
             ["Месяц", "Норма часов", "Праздничные дни (через запятую)"])
@@ -56,8 +53,41 @@ class SettingsTab(QWidget):
         self.table.itemChanged.connect(self.on_cell_changed)
         lay.addWidget(self.table)
 
+        # Группа цветов
+        color_group = QGroupBox("Цвета обозначений")
+        color_layout = QGridLayout()
+        self.color_buttons = {}
+        col = 0
+        row = 0
+        for code, desc in DESIGNATIONS.items():
+            btn = QPushButton(f"{code} - {desc}")
+            btn.clicked.connect(lambda checked, c=code: self.pick_code_color(c))
+            color_layout.addWidget(btn, row, col)
+            self.color_buttons[code] = btn
+            col += 1
+            if col > 2:
+                col = 0
+                row += 1
+        color_group.setLayout(color_layout)
+        lay.addWidget(color_group)
+
         self.load_hour_mode()
         self.refresh_years()
+        self.update_color_buttons()
+
+    def update_color_buttons(self):
+        colors = get_all_colors()
+        for code, btn in self.color_buttons.items():
+            color = colors.get(code, "#FFFFFF")
+            btn.setStyleSheet(f"background-color: {color};")
+
+    def pick_code_color(self, code):
+        colors = get_all_colors()
+        current = QColor(colors.get(code, "#FFFFFF"))
+        c = QColorDialog.getColor(current, self, f"Цвет для '{code}'")
+        if c.isValid():
+            set_code_color(code, c.name())
+            self.update_color_buttons()
 
     def refresh_years(self):
         years = list_years()
@@ -117,12 +147,6 @@ class SettingsTab(QWidget):
             delete_year(year)
             self.refresh_years()
 
-    def pick_color(self):
-        current = QColor(get_setting("weekend_color", "#FFE0B2"))
-        c = QColorDialog.getColor(current, self, "Цвет выходных")
-        if c.isValid():
-            set_setting("weekend_color", c.name())
-
     def load_hour_mode(self):
         v = get_setting("use_7h", "1")
         self.hour_mode.blockSignals(True)
@@ -130,4 +154,4 @@ class SettingsTab(QWidget):
         self.hour_mode.blockSignals(False)
 
     def save_hour_mode(self):
-        set_setting("use_7h", "1" if self.hour_mode.currentIndex() == 1 else "0")
+        set_setting("use_7h", "1" if self.hour_mode.currentIndex() == 1 else 0)
