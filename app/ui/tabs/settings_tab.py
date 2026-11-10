@@ -75,11 +75,32 @@ class SettingsTab(QWidget):
         self.refresh_years()
         self.update_color_buttons()
 
+    def _get_contrast_text_color(self, hex_color):
+        """Возвращает черный или белый цвет в зависимости от яркости фона."""
+        hex_color = hex_color.lstrip('#')
+        if len(hex_color) == 3:
+            hex_color = ''.join([c*2 for c in hex_color])
+        try:
+            r = int(hex_color[0:2], 16)
+            g = int(hex_color[2:4], 16)
+            b = int(hex_color[4:6], 16)
+            yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000
+            return "#000000" if yiq >= 128 else "#FFFFFF"
+        except Exception:
+            return "#000000"
+
     def update_color_buttons(self):
         colors = get_all_colors()
         for code, btn in self.color_buttons.items():
             color = colors.get(code, "#FFFFFF")
-            btn.setStyleSheet(f"background-color: {color};")
+            text_color = self._get_contrast_text_color(color)
+            btn.setStyleSheet(
+                f"background-color: {color}; "
+                f"color: {text_color}; "
+                f"font-weight: bold; "
+                f"border: 1px solid #999; "
+                f"padding: 4px;"
+            )
 
     def pick_code_color(self, code):
         colors = get_all_colors()
@@ -154,4 +175,4 @@ class SettingsTab(QWidget):
         self.hour_mode.blockSignals(False)
 
     def save_hour_mode(self):
-        set_setting("use_7h", "1" if self.hour_mode.currentIndex() == 1 else 0)
+        set_setting("use_7h", "1" if self.hour_mode.currentIndex() == 1 else "0")
