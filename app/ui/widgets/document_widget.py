@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                                 QComboBox, QMessageBox, QFileDialog,
                                 QAbstractItemView)
 from PySide6.QtGui import QColor, QBrush, QFont, QKeyEvent
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 
 from ...config import MONTHS_RU, WEEKDAYS_RU
 from ...core.calculations import (calc_security_schedule,
@@ -142,8 +142,9 @@ class DocumentWidget(QDialog):
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setDragDropMode(QAbstractItemView.InternalMove)
         self.table.setDragDropOverwriteMode(False)
+        self.table.setDefaultDropAction(Qt.MoveAction) # Исправление Drag&Drop
         self.table.itemChanged.connect(self.on_item_changed)
-        # Отслеживание мыши для растягивания
+        
         self.table.mousePressEvent = self._table_mouse_press
         self.table.mouseMoveEvent = self._table_mouse_move
         self.table.mouseReleaseEvent = self._table_mouse_release
@@ -205,13 +206,11 @@ class DocumentWidget(QDialog):
                 it = QTableWidgetItem(code)
                 it.setTextAlignment(Qt.AlignCenter)
                 
-                # Красим ячейку, если для кода задан цвет
                 if code in code_colors:
                     it.setBackground(QBrush(QColor(code_colors[code])))
 
                 self.table.setItem(gr, 1 + d, it)
             
-            # Ручные значения или формулы
             res = self._calculate(row)
             for i, key in enumerate(self.summary_keys):
                 col = 2 + n_days + i
@@ -258,19 +257,16 @@ class DocumentWidget(QDialog):
         r_idx = r - 2
         n_days = self.last_day
 
-        # Если изменилась ячейка календаря
         if 2 <= c <= 1 + n_days:
             code = item.text()
             self.data["rows"][r_idx]["cells"][c - 1] = code
             
-            # Красим
             code_colors = get_all_colors()
             if code in code_colors:
                 item.setBackground(QBrush(QColor(code_colors[code])))
             else:
                 item.setBackground(QBrush(QColor("#FFFFFF")))
 
-            # Мгновенный пересчет строки (если не ручной режим)
             if not self.manual_mode:
                 res = self._calculate(self.data["rows"][r_idx])
                 self._is_updating = True
@@ -279,12 +275,10 @@ class DocumentWidget(QDialog):
                     self.table.item(r, col).setText(str(res.get(key, "")))
                 self._is_updating = False
 
-        # Если изменились итоговые графы (только в ручном режиме)
         elif c > 1 + n_days and self.manual_mode:
             key = self.summary_keys[c - (2 + n_days)]
             self.data["rows"][r_idx]["overrides"][key] = item.text()
 
-    # --- Автозаполнение и растягивание ---
     def auto_fill_pattern(self):
         sel = self.table.selectedRanges()
         if not sel:
@@ -297,24 +291,20 @@ class DocumentWidget(QDialog):
         
         pattern = []
         if rows == 1 and cols == 4:
-            # Горизонтально
             row = rng.topRow()
             for c in range(rng.leftColumn(), rng.rightColumn() + 1):
                 pattern.append(self.table.item(row, c).text())
             
-            # Заполняем вправо
             n_days = self.last_day
             for c in range(rng.rightColumn() + 1, 2 + n_days):
                 val = pattern[(c - rng.leftColumn()) % 4]
                 self.table.item(row, c).setText(val)
                 
         elif rows == 4 and cols == 1:
-            # Вертикально
             col = rng.leftColumn()
             for r in range(rng.topRow(), rng.bottomRow() + 1):
                 pattern.append(self.table.item(r, col).text())
             
-            # Заполняем вниз
             for r in range(rng.bottomRow() + 1, self.table.rowCount()):
                 val = pattern[(r - rng.topRow()) % 4]
                 self.table.item(r, col).setText(val)
@@ -324,17 +314,13 @@ class DocumentWidget(QDialog):
     def show_warning(self, text):
         self.banner.setText(text)
         self.banner.setVisible(True)
-        # Скрываем через 4 секунды
-        from PySide6.QtCore import QTimer
         QTimer.singleShot(4000, lambda: self.banner.setVisible(False))
 
-    # --- Drag Fill Handle (Упрощенная имитация) ---
     def _table_mouse_press(self, event):
         if event.button() == Qt.LeftButton:
             idx = self.table.indexAt(event.pos())
             if idx.isValid():
                 rect = self.table.visualRect(idx)
-                # Если кликнули в правый нижний угол ячейки
                 if event.pos().x() > rect.right() - 8 and event.pos().y() > rect.bottom() - 8:
                     self._drag_start = (idx.row(), idx.column())
                     self._drag_val = self.table.item(idx.row(), idx.column()).text()
@@ -349,7 +335,6 @@ class DocumentWidget(QDialog):
                 r, c = idx.row(), idx.column()
                 r0, c0 = self._drag_start
                 if r != r0 or c != c0:
-                    # Заливаем диапазон
                     min_r, max_r = min(r0, r), max(r0, r)
                     min_c, max_c = min(c0, c), max(c0, c)
                     self._is_updating = True
@@ -359,7 +344,6 @@ class DocumentWidget(QDialog):
                                 self.table.item(i, j).setText(self._drag_val)
                     self._is_updating = False
                     self.is_modified = True
-                    # Пересчитываем затронутые строки
                     for i in range(min_r, max_r + 1):
                         if i > 1 and not self.manual_mode:
                             row_data = self.data["rows"][i-2]
@@ -378,22 +362,40 @@ class DocumentWidget(QDialog):
 
     # --- Drag & Drop для строк ---
     def dropEvent(self, event):
-        # Если перетаскивают строку сотрудника
-        if event.source() == self.table and event.pos().y() > self.table.rowHeight(0) * 2:
-            drop_row = self.table.rowAt(event.pos().y())
-            if drop_row > 1:
-                src_row = self.table.currentRow()
-                if src_row > 1 and src_row != drop_row:
-                    # Меняем в данных
-                    row_data = self.data["rows"].pop(src_row - 2)
-                    self.data["rows"].insert(drop_row - 2 if drop_row > src_row else drop_row - 2, row_data)
-                    # Перестраиваем таблицу
-                    self._build_table()
-                    self.is_modified = True
-                    return
-        super().dropEvent(event)
+        if event.source() == self.table:
+            src_row = self.table.currentRow()
+            if src_row < 2:
+                event.ignore()
+                return
 
-    # --- Управление окном ---
+            index = self.table.indexAt(event.pos())
+            if not index.isValid():
+                drop_row = self.table.rowCount()
+            else:
+                drop_row = index.row()
+
+            if drop_row < 2:
+                drop_row = 2
+            if drop_row > self.table.rowCount():
+                drop_row = self.table.rowCount()
+
+            if src_row != drop_row:
+                real_drop = drop_row - 2
+                if drop_row > src_row:
+                    real_drop -= 1
+
+                row_data = self.data["rows"].pop(src_row - 2)
+                self.data["rows"].insert(real_drop, row_data)
+
+                self._build_table()
+                self.is_modified = True
+                self.table.selectRow(real_drop + 2)
+
+            event.setDropAction(Qt.MoveAction)
+            event.accept()
+        else:
+            event.ignore()
+
     def _update_manual_ui(self):
         if self.manual_mode:
             self.banner.setText("Включён режим ручного ввода — графы можно редактировать.")
@@ -438,7 +440,6 @@ class DocumentWidget(QDialog):
             self.table.item(idx.row(), idx.column()).setText(code)
         self._is_updating = False
         
-        # Пересчитываем все строки
         for r_idx in range(len(self.data["rows"])):
             if not self.manual_mode:
                 res = self._calculate(self.data["rows"][r_idx])
@@ -477,7 +478,7 @@ class DocumentWidget(QDialog):
 
     def keyPressEvent(self, event: QKeyEvent):
         if event.key() == Qt.Key_Escape:
-            self.close()  # Вызовет closeEvent
+            self.close() 
         else:
             super().keyPressEvent(event)
 
