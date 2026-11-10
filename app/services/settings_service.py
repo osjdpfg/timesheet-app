@@ -1,3 +1,4 @@
+import json
 from ..database.db import get_session
 from ..database.models import Year, MonthSetting, Setting, Document
 from ..config import DEFAULT_WEEKEND_COLOR
@@ -27,6 +28,21 @@ def set_setting(key, value):
 
 def get_weekend_color():
     return get_setting("weekend_color", DEFAULT_WEEKEND_COLOR)
+
+
+def get_all_colors():
+    # Возвращает словарь: {'В': '#FFE0B2', '15': '#FFFFFF', ...}
+    raw = get_setting("code_colors", "{}")
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {}
+
+
+def set_code_color(code, color):
+    colors = get_all_colors()
+    colors[code] = color
+    set_setting("code_colors", json.dumps(colors))
 
 
 def use_7h_enabled():
