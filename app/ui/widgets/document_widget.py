@@ -3,8 +3,9 @@ from datetime import date
 
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                                 QTableWidget, QTableWidgetItem, QLabel,
-                                QComboBox, QMessageBox, QFileDialog)
-from PySide6.QtGui import QColor, QBrush, QFont
+                                QComboBox, QMessageBox, QFileDialog,
+                                QAbstractItemView)
+from PySide6.QtGui import QColor, QBrush, QFont, QKeyEvent
 from PySide6.QtCore import Qt
 
 from ...config import MONTHS_RU, WEEKDAYS_RU
@@ -12,7 +13,7 @@ from ...core.calculations import (calc_security_schedule,
                                    calc_security_timesheet,
                                    calc_transport_timesheet)
 from ...services.settings_service import (get_year_month, use_7h_enabled,
-                                           get_weekend_color)
+                                           get_weekend_color, get_all_colors)
 from ...services.document_service import load_document, save_document
 from ...export.excel_export import export_document_to_excel
 
@@ -40,6 +41,11 @@ class _CellProxy:
 class DocumentWidget(QDialog):
     def __init__(self, doc_id, parent=None):
         super().__init__(parent)
+        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.is_modified = False
+        self._is_updating = False
+        self._drag_start = None
+
         self.doc_id = doc_id
         data = load_document(doc_id)
         if not data:
@@ -116,6 +122,10 @@ class DocumentWidget(QDialog):
         btn_apply.clicked.connect(self.apply_code_to_selected)
         tools.addWidget(btn_apply)
 
+        btn_autofill = QPushButton("Автозаполнить (по 4 ячейкам)")
+        btn_autofill.clicked.connect(self.auto_fill_pattern)
+        tools.addWidget(btn_autofill)
+
         tools.addStretch()
 
         btn_save = QPushButton("Сохранить")
@@ -129,11 +139,21 @@ class DocumentWidget(QDialog):
         lay.addLayout(tools)
 
         self.table = QTableWidget()
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.table.setDragDropMode(QAbstractItemView.InternalMove)
+        self.table.setDragDropOverwriteMode(False)
+        self.table.itemChanged.connect(self.on_item_changed)
+        # Отслеживание мыши для растягивания
+        self.table.mousePressEvent = self._table_mouse_press
+        self.table.mouseMoveEvent = self._table_mouse_move
+        self.table.mouseReleaseEvent = self._table_mouse_release
+
         lay.addWidget(self.table)
         self._build_table()
         self._update_manual_ui()
 
     def _build_table(self):
+        self._is_updating = True
         n_rows = len(self.data["rows"])
         n_days = self.last_day
         n_cols = 2 + n_days + len(self.summary_keys)
@@ -154,11 +174,12 @@ class DocumentWidget(QDialog):
         self.table.setSpan(0, 1, 2, 1)
 
         weekend_color = QColor(get_weekend_color())
+        code_colors = get_all_colors()
 
         for d in range(1, n_days + 1):
             col = 1 + d
             dow = date(self.year, self.month, d).weekday()
-            wd = QTableWidgetItem(WEEKDAYS_RU[dow][:2])
+            wd = QTableWidgetItem(WEEKDAYS_RU[dow])
             wd.setTextAlignment(Qt.AlignCenter)
             self.table.setItem(0, col, wd)
             dt = QTableWidgetItem(str(d))
@@ -183,10 +204,27 @@ class DocumentWidget(QDialog):
                 code = row["cells"].get(d, "")
                 it = QTableWidgetItem(code)
                 it.setTextAlignment(Qt.AlignCenter)
+                
+                # Красим ячейку, если для кода задан цвет
+                if code in code_colors:
+                    it.setBackground(QBrush(QColor(code_colors[code])))
+
                 self.table.setItem(gr, 1 + d, it)
-            self._recalc_row(r_idx)
+            
+            # Ручные значения или формулы
+            res = self._calculate(row)
+            for i, key in enumerate(self.summary_keys):
+                col = 2 + n_days + i
+                if self.manual_mode and key in row["overrides"]:
+                    val = row["overrides"][key]
+                else:
+                    val = str(res.get(key, ""))
+                it = QTableWidgetItem(val)
+                it.setTextAlignment(Qt.AlignCenter)
+                self.table.setItem(gr, col, it)
 
         self.table.resizeRowsToContents()
+        self._is_updating = False
 
     def _row_proxy(self, row):
         p = _RowProxy()
@@ -208,25 +246,158 @@ class DocumentWidget(QDialog):
         return calc_transport_timesheet(proxy, self.year, self.month,
                                         norm_hours, holidays, use_7h)
 
-    def _recalc_row(self, r_idx):
-        row = self.data["rows"][r_idx]
-        res = self._calculate(row)
-        gr = r_idx + 2
-        for i, key in enumerate(self.summary_keys):
-            col = 2 + self.last_day + i
-            if self.manual_mode and key in row["overrides"]:
-                val = row["overrides"][key]
-            else:
-                val = str(res.get(key, ""))
-            it = QTableWidgetItem(val)
-            it.setTextAlignment(Qt.AlignCenter)
-            self.table.setItem(gr, col, it)
+    def on_item_changed(self, item):
+        if self._is_updating:
+            return
+        self.is_modified = True
+        
+        r = item.row()
+        c = item.column()
+        if r < 2: return
 
+        r_idx = r - 2
+        n_days = self.last_day
+
+        # Если изменилась ячейка календаря
+        if 2 <= c <= 1 + n_days:
+            code = item.text()
+            self.data["rows"][r_idx]["cells"][c - 1] = code
+            
+            # Красим
+            code_colors = get_all_colors()
+            if code in code_colors:
+                item.setBackground(QBrush(QColor(code_colors[code])))
+            else:
+                item.setBackground(QBrush(QColor("#FFFFFF")))
+
+            # Мгновенный пересчет строки (если не ручной режим)
+            if not self.manual_mode:
+                res = self._calculate(self.data["rows"][r_idx])
+                self._is_updating = True
+                for i, key in enumerate(self.summary_keys):
+                    col = 2 + n_days + i
+                    self.table.item(r, col).setText(str(res.get(key, "")))
+                self._is_updating = False
+
+        # Если изменились итоговые графы (только в ручном режиме)
+        elif c > 1 + n_days and self.manual_mode:
+            key = self.summary_keys[c - (2 + n_days)]
+            self.data["rows"][r_idx]["overrides"][key] = item.text()
+
+    # --- Автозаполнение и растягивание ---
+    def auto_fill_pattern(self):
+        sel = self.table.selectedRanges()
+        if not sel:
+            self.show_warning("Выделите диапазон для автозаполнения.")
+            return
+        
+        rng = sel[0]
+        rows = rng.rowCount()
+        cols = rng.columnCount()
+        
+        pattern = []
+        if rows == 1 and cols == 4:
+            # Горизонтально
+            row = rng.topRow()
+            for c in range(rng.leftColumn(), rng.rightColumn() + 1):
+                pattern.append(self.table.item(row, c).text())
+            
+            # Заполняем вправо
+            n_days = self.last_day
+            for c in range(rng.rightColumn() + 1, 2 + n_days):
+                val = pattern[(c - rng.leftColumn()) % 4]
+                self.table.item(row, c).setText(val)
+                
+        elif rows == 4 and cols == 1:
+            # Вертикально
+            col = rng.leftColumn()
+            for r in range(rng.topRow(), rng.bottomRow() + 1):
+                pattern.append(self.table.item(r, col).text())
+            
+            # Заполняем вниз
+            for r in range(rng.bottomRow() + 1, self.table.rowCount()):
+                val = pattern[(r - rng.topRow()) % 4]
+                self.table.item(r, col).setText(val)
+        else:
+            self.show_warning("Для автозаполнения выделите ровно 4 ячейки по горизонтали или вертикали.")
+
+    def show_warning(self, text):
+        self.banner.setText(text)
+        self.banner.setVisible(True)
+        # Скрываем через 4 секунды
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(4000, lambda: self.banner.setVisible(False))
+
+    # --- Drag Fill Handle (Упрощенная имитация) ---
+    def _table_mouse_press(self, event):
+        if event.button() == Qt.LeftButton:
+            idx = self.table.indexAt(event.pos())
+            if idx.isValid():
+                rect = self.table.visualRect(idx)
+                # Если кликнули в правый нижний угол ячейки
+                if event.pos().x() > rect.right() - 8 and event.pos().y() > rect.bottom() - 8:
+                    self._drag_start = (idx.row(), idx.column())
+                    self._drag_val = self.table.item(idx.row(), idx.column()).text()
+                    return
+        self._drag_start = None
+        QTableWidget.mousePressEvent(self.table, event)
+
+    def _table_mouse_move(self, event):
+        if getattr(self, '_drag_start', None) and event.buttons() & Qt.LeftButton:
+            idx = self.table.indexAt(event.pos())
+            if idx.isValid():
+                r, c = idx.row(), idx.column()
+                r0, c0 = self._drag_start
+                if r != r0 or c != c0:
+                    # Заливаем диапазон
+                    min_r, max_r = min(r0, r), max(r0, r)
+                    min_c, max_c = min(c0, c), max(c0, c)
+                    self._is_updating = True
+                    for i in range(min_r, max_r + 1):
+                        for j in range(min_c, max_c + 1):
+                            if i > 1 and j > 1:
+                                self.table.item(i, j).setText(self._drag_val)
+                    self._is_updating = False
+                    self.is_modified = True
+                    # Пересчитываем затронутые строки
+                    for i in range(min_r, max_r + 1):
+                        if i > 1 and not self.manual_mode:
+                            row_data = self.data["rows"][i-2]
+                            for j in range(min_c, max_c + 1):
+                                row_data["cells"][j-1] = self._drag_val
+                            res = self._calculate(row_data)
+                            for k, key in enumerate(self.summary_keys):
+                                col = 2 + self.last_day + k
+                                self.table.item(i, col).setText(str(res.get(key, "")))
+        else:
+            QTableWidget.mouseMoveEvent(self.table, event)
+
+    def _table_mouse_release(self, event):
+        self._drag_start = None
+        QTableWidget.mouseReleaseEvent(self.table, event)
+
+    # --- Drag & Drop для строк ---
+    def dropEvent(self, event):
+        # Если перетаскивают строку сотрудника
+        if event.source() == self.table and event.pos().y() > self.table.rowHeight(0) * 2:
+            drop_row = self.table.rowAt(event.pos().y())
+            if drop_row > 1:
+                src_row = self.table.currentRow()
+                if src_row > 1 and src_row != drop_row:
+                    # Меняем в данных
+                    row_data = self.data["rows"].pop(src_row - 2)
+                    self.data["rows"].insert(drop_row - 2 if drop_row > src_row else drop_row - 2, row_data)
+                    # Перестраиваем таблицу
+                    self._build_table()
+                    self.is_modified = True
+                    return
+        super().dropEvent(event)
+
+    # --- Управление окном ---
     def _update_manual_ui(self):
         if self.manual_mode:
-            self.banner.setText(
-                "Включён режим ручного ввода — автоматический пересчёт "
-                "граф отключён (кроме ячеек календаря).")
+            self.banner.setText("Включён режим ручного ввода — графы можно редактировать.")
+            self.banner.setStyleSheet("background:#FFC107; color:black; padding:6px; font-weight:bold;")
             self.banner.setVisible(True)
             self.btn_manual.setText("Выключить ручной ввод")
         else:
@@ -251,24 +422,30 @@ class DocumentWidget(QDialog):
         else:
             self.manual_mode = True
         self._update_manual_ui()
-        for i in range(len(self.data["rows"])):
-            self._recalc_row(i)
+        self._build_table()
 
     def apply_code_to_selected(self):
         code = self.code_combo.currentText()
         n_days = self.last_day
+        self._is_updating = True
         for idx in self.table.selectedIndexes():
             r = idx.row() - 2
             c = idx.column()
-            if r < 0:
-                continue
-            if c < 2 or c > 1 + n_days:
+            if r < 0 or c < 2 or c > 1 + n_days:
                 continue
             day = c - 1
             self.data["rows"][r]["cells"][day] = code
             self.table.item(idx.row(), idx.column()).setText(code)
+        self._is_updating = False
+        
+        # Пересчитываем все строки
         for r_idx in range(len(self.data["rows"])):
-            self._recalc_row(r_idx)
+            if not self.manual_mode:
+                res = self._calculate(self.data["rows"][r_idx])
+                for i, key in enumerate(self.summary_keys):
+                    col = 2 + n_days + i
+                    self.table.item(r_idx + 2, col).setText(str(res.get(key, "")))
+        self.is_modified = True
 
     def save(self):
         n_days = self.last_day
@@ -282,6 +459,7 @@ class DocumentWidget(QDialog):
                     it = self.table.item(gr, 2 + n_days + i)
                     row["overrides"][key] = it.text() if it else ""
         save_document(self.doc_id, self.data["rows"], self.manual_mode)
+        self.is_modified = False
 
     def export_excel(self):
         path, _ = QFileDialog.getSaveFileName(
@@ -296,3 +474,30 @@ class DocumentWidget(QDialog):
             QMessageBox.information(self, "Готово", f"Файл сохранён:\n{path}")
         except Exception as e:
             QMessageBox.critical(self, "Ошибка экспорта", str(e))
+
+    def keyPressEvent(self, event: QKeyEvent):
+        if event.key() == Qt.Key_Escape:
+            self.close()  # Вызовет closeEvent
+        else:
+            super().keyPressEvent(event)
+
+    def closeEvent(self, event):
+        if self.is_modified:
+            msg = QMessageBox(self)
+            msg.setIcon(QMessageBox.Warning)
+            msg.setWindowTitle("Несохраненные изменения")
+            msg.setText("В документе есть несохраненные изменения. Сохранить перед выходом?")
+            btn_save = msg.addButton("Сохранить и выйти", QMessageBox.AcceptRole)
+            btn_exit = msg.addButton("Выйти без сохранения", QMessageBox.DestructiveRole)
+            btn_cancel = msg.addButton("Остаться", QMessageBox.RejectRole)
+            msg.exec()
+
+            if msg.clickedButton() == btn_save:
+                self.save()
+                event.accept()
+            elif msg.clickedButton() == btn_exit:
+                event.accept()
+            else:
+                event.ignore()
+        else:
+            event.accept()
