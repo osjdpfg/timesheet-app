@@ -10,6 +10,7 @@ from .security_tab import NewDocumentDialog, OpenPreviousDialog
 class TransportTab(QWidget):
     def __init__(self):
         super().__init__()
+        self.open_windows = []
         lay = QVBoxLayout(self)
         tools = QHBoxLayout()
         b1 = QPushButton("Новый табель")
@@ -42,22 +43,24 @@ class TransportTab(QWidget):
         if d.exec():
             year, month, employees, _ = d.get_result()
             if not employees:
-                QMessageBox.warning(self, "Пусто",
-                                    "Не выбрано ни одного сотрудника")
+                QMessageBox.warning(self, "Пусто", "Не выбрано ни одного сотрудника")
                 return
-            doc_id = create_document("timesheet", "transport", year, month,
-                                     employees)
+            doc_id = create_document("timesheet", "transport", year, month, employees)
             self.refresh()
+            
             w = DocumentWidget(doc_id, self)
-            w.exec()
-            self.refresh()
+            w.show()
+            self.open_windows.append(w)
+            w.finished.connect(lambda: self.open_windows.remove(w) if w in self.open_windows else None)
 
     def open_selected(self):
         item = self.list_widget.currentItem()
         if not item:
             return
         w = DocumentWidget(item.data(0x100), self)
-        w.exec()
+        w.show()
+        self.open_windows.append(w)
+        w.finished.connect(lambda: self.open_windows.remove(w) if w in self.open_windows else None)
         self.refresh()
 
     def open_previous(self):
@@ -66,14 +69,15 @@ class TransportTab(QWidget):
             doc_id = d.get_selected_doc_id()
             if doc_id:
                 w = DocumentWidget(doc_id, self)
-                w.exec()
+                w.show()
+                self.open_windows.append(w)
+                w.finished.connect(lambda: self.open_windows.remove(w) if w in self.open_windows else None)
                 self.refresh()
 
     def delete_selected(self):
         item = self.list_widget.currentItem()
         if not item:
             return
-        if QMessageBox.question(self, "Удалить",
-                                "Удалить документ?") == QMessageBox.Yes:
+        if QMessageBox.question(self, "Удалить", "Удалить документ?") == QMessageBox.Yes:
             delete_document(item.data(0x100))
             self.refresh()
