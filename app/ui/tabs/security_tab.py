@@ -1,0 +1,212 @@
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
+                                QListWidget, QListWidgetItem, QMessageBox,
+                                QDialog, QComboBox, QLabel, QTableWidget,
+                                QTableWidgetItem, QCheckBox, QDialogButtonBox)
+
+from ...config import MONTHS_RU
+from ...services.employee_service import list_employees
+from ...services.document_service import (create_document, list_documents,
+                                           delete_document)
+from ...services.settings_service import list_years
+from ..widgets.document_widget import DocumentWidget
+
+
+class NewDocumentDialog(QDialog):
+    def __init__(self, group, doc_type, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Новый документ")
+        self.resize(500, 550)
+        self.group = group
+        self.doc_type = doc_type
+
+        lay = QVBoxLayout(self)
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Месяц:"))
+        self.month_combo = QComboBox()
+        for i, m in enumerate(MONTHS_RU):
+            self.month_combo.addItem(m, i + 1)
+        row.addWidget(self.month_combo)
+
+        row.addWidget(QLabel("Год:"))
+        self.year_combo = QComboBox()
+        years = list_years()
+        if not years:
+            QMessageBox.warning(self, "Нет годов",
+                                "Сначала добавьте год в разделе «Общие настройки»")
+            self.reject()
+            return
+        for y in years:
+            self.year_combo.addItem(str(y), y)
+        row.addWidget(self.year_combo)
+        lay.addLayout(row)
+
+        self.schedule_combo = None
+        if doc_type == "timesheet" and group == "security":
+            r2 = QHBoxLayout()
+            r2.addWidget(QLabel("На основе графика:"))
+            self.schedule_combo = QComboBox()
+            self.schedule_combo.addItem("(без графика)", None)
+            for d in list_documents("schedule", "security"):
+                did, dt, grp, yr, mn = d
+                self.schedule_combo.addItem(
+                    f"{MONTHS_RU[mn - 1]} {yr}", did)
+            r2.addWidget(self.schedule_combo)
+            lay.addLayout(r2)
+
+        lay.addWidget(QLabel("Сотрудники:"))
+        self.table = QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(["", "ФИО", "Должность"])
+        emps = list_employees(group)
+        self.employees_data = emps
+        self.table.setRowCount(len(emps))
+        for i, e in enumerate(emps):
+            cb = QCheckBox()
+            cb.setChecked(True)
+            self.table.setCellWidget(i, 0, cb)
+            self.table.setItem(i, 1, QTableWidgetItem(e[1]))
+            self.table.setItem(i, 2, QTableWidgetItem(e[2]))
+        lay.addWidget(self.table)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        lay.addWidget(btns)
+
+    def get_result(self):
+        month = self.month_combo.currentData()
+        year = self.year_combo.currentData()
+        selected = []
+        for i in range(self.table.rowCount()):
+            cb = self.table.cellWidget(i, 0)
+            if cb and cb.isChecked():
+                e = self.employees_data[i]
+                selected.append((e[1], e[2]))
+        src = None
+        if self.schedule_combo is not None:
+            src = self.schedule_combo.currentData()
+        return year, month, selected, src
+
+
+class OpenPreviousDialog(QDialog):
+    def __init__(self, group, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Открыть документ")
+        self.resize(400, 400)
+        self.group = group
+        lay = QVBoxLayout(self)
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Год:"))
+        self.year_combo = QComboBox()
+        for y in list_years():
+            self.year_combo.addItem(str(y), y)
+        self.year_combo.currentIndexChanged.connect(self.refresh)
+        row.addWidget(self.year_combo)
+        lay.addLayout(row)
+
+        self.list_widget = QListWidget()
+        self.list_widget.itemDoubleClicked.connect(self.accept)
+        lay.addWidget(self.list_widget)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Open | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        lay.addWidget(btns)
+
+        self.refresh()
+
+    def refresh(self):
+        self.list_widget.clear()
+        year = self.year_combo.currentData()
+        if not year:
+            return
+        for d in list_documents(group=self.group):
+            did, dt, grp, yr, mn = d
+            if yr != year:
+                continue
+            title = "График" if dt == "schedule" else "Табель"
+            item = QListWidgetItem(f"{title} за {MONTHS_RU[mn - 1]}")
+            item.setData(0x100, did)
+            self.list_widget.addItem(item)
+
+    def get_selected_doc_id(self):
+        item = self.list_widget.currentItem()
+        return item.data(0x100) if item else None
+
+
+class SecurityTab(QWidget):
+    def __init__(self):
+        super().__init__()
+        lay = QVBoxLayout(self)
+
+        tools = QHBoxLayout()
+        b1 = QPushButton("Новый график")
+        b1.clicked.connect(lambda: self.new_doc("schedule"))
+        tools.addWidget(b1)
+        b2 = QPushButton("Новый табель")
+        b2.clicked.connect(lambda: self.new_doc("timesheet"))
+        tools.addWidget(b2)
+        b3 = QPushButton("Предыдущий график/табель")
+        b3.clicked.connect(self.open_previous)
+        tools.addWidget(b3)
+        b4 = QPushButton("Удалить")
+        b4.clicked.connect(self.delete_selected)
+        tools.addWidget(b4)
+        tools.addStretch()
+        lay.addLayout(tools)
+
+        self.list_widget = QListWidget()
+        self.list_widget.itemDoubleClicked.connect(self.open_selected)
+        lay.addWidget(self.list_widget)
+        self.refresh()
+
+    def refresh(self):
+        self.list_widget.clear()
+        for d in list_documents(group="security"):
+            did, dt, grp, yr, mn = d
+            title = "График" if dt == "schedule" else "Табель"
+            item = QListWidgetItem(f"{title} за {MONTHS_RU[mn - 1]} {yr}")
+            item.setData(0x100, did)
+            self.list_widget.addItem(item)
+
+    def new_doc(self, doc_type):
+        d = NewDocumentDialog("security", doc_type, self)
+        if d.exec():
+            year, month, employees, source = d.get_result()
+            if not employees:
+                QMessageBox.warning(self, "Пусто",
+                                    "Не выбрано ни одного сотрудника")
+                return
+            doc_id = create_document(doc_type, "security", year, month,
+                                     employees, source)
+            self.refresh()
+            w = DocumentWidget(doc_id, self)
+            w.exec()
+            self.refresh()
+
+    def open_selected(self):
+        item = self.list_widget.currentItem()
+        if not item:
+            return
+        w = DocumentWidget(item.data(0x100), self)
+        w.exec()
+        self.refresh()
+
+    def open_previous(self):
+        d = OpenPreviousDialog("security", self)
+        if d.exec():
+            doc_id = d.get_selected_doc_id()
+            if doc_id:
+                w = DocumentWidget(doc_id, self)
+                w.exec()
+                self.refresh()
+
+    def delete_selected(self):
+        item = self.list_widget.currentItem()
+        if not item:
+            return
+        if QMessageBox.question(self, "Удалить",
+                                "Удалить документ?") == QMessageBox.Yes:
+            delete_document(item.data(0x100))
+            self.refresh()
