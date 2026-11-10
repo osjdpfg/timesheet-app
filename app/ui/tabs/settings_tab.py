@@ -3,6 +3,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                                 QTableWidgetItem, QColorDialog, QMessageBox,
                                 QInputDialog)
 from PySide6.QtGui import QColor
+from PySide6.QtCore import Qt
 from ...services.settings_service import (list_years, add_year, delete_year,
                                            update_month, get_year_month,
                                            get_setting, set_setting)
@@ -50,7 +51,7 @@ class SettingsTab(QWidget):
         self.table.horizontalHeader().setStretchLastSection(True)
         for i, m in enumerate(MONTHS_RU):
             it = QTableWidgetItem(m)
-            it.setFlags(it.flags() & ~0x2)
+            it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(i, 0, it)
         self.table.itemChanged.connect(self.on_cell_changed)
         lay.addWidget(self.table)
