@@ -23,12 +23,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Build EXE
+      - name: Build EXE (ONEDIR)
         run: |
-          pyinstaller --noconfirm --onefile --windowed --name TimesheetApp --clean main.py
+          pyinstaller --noconfirm --onedir --windowed --name TimesheetApp --clean main.py
+
+      - name: Zip Artifact
+        run: |
+          cd dist
+          powershell Compress-Archive -Path TimesheetApp -DestinationPath TimesheetApp-Windows.zip
 
       - name: Upload EXE
         uses: actions/upload-artifact@v4
         with:
           name: TimesheetApp-Windows
-          path: dist/TimesheetApp.exe
+          path: dist/TimesheetApp-Windows.zip
