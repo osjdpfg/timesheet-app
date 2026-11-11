@@ -45,14 +45,18 @@ def export_document_to_excel(doc_id, path):
     use_7h = get_setting("use_7h", "1") == "1"
     weekend_color = get_setting("weekend_color", "#FFE0B2").replace("#", "")
     manual_mode = data["manual_mode"]
+    
+    # Получаем номер копии (1), (2) и т.д.
+    inst_num = data.get("instance_number", 0)
+    suffix = f" ({inst_num})" if inst_num > 0 else ""
 
     if doc_type == "schedule":
         title = (f"График группы по охранному обеспечению "
-                 f"на {MONTHS_RU[month - 1]} {year} г.")
+                 f"на {MONTHS_RU[month - 1]} {year} г.{suffix}")
         summary = ["Факт. работы", "Отпуск", "Всего", "Норма", "Ознакомлен"]
     elif group == "security":
         title = (f"Табель группы по охранному обеспечению "
-                 f"на {MONTHS_RU[month - 1]} {year} г.")
+                 f"на {MONTHS_RU[month - 1]} {year} г.{suffix}")
         summary = ["Факт. работы", "Медицинский осмотр", "Болезнь",
                    "Справка", "Отпуск", "Прогул",
                    "Отпуск без сохранения з/п", "Всего", "Норма",
@@ -60,7 +64,7 @@ def export_document_to_excel(doc_id, path):
                    "Работа в праздничные дни"]
     else:
         title = (f"Табель транспортной группы "
-                 f"на {MONTHS_RU[month - 1]} {year} г.")
+                 f"на {MONTHS_RU[month - 1]} {year} г.{suffix}")
         summary = ["Факт. работы, дни", "Командировка, дни",
                    "Разъездной характер работы", "Расчет по среднему",
                    "Медицинский осмотр", "Болезнь", "Отпуск",
