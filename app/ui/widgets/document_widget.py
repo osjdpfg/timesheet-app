@@ -6,13 +6,14 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                                 QTableWidget, QTableWidgetItem, QLabel,
                                 QComboBox, QMessageBox, QFileDialog,
                                 QAbstractItemView, QWidget)
-from PySide6.QtGui import QColor, QBrush, QFont, QKeyEvent
+from PySide6.QtGui import QColor, QBrush, QFont, QKeyEvent, QKeySequence
 from PySide6.QtCore import Qt, QTimer
 
 from ...config import MONTHS_RU, WEEKDAYS_RU
 from ...core.calculations import (calc_security_schedule,
                                    calc_security_timesheet,
                                    calc_transport_timesheet)
+from ...core.designations import DESIGNATIONS
 from ...services.settings_service import (get_year_month, use_7h_enabled,
                                            get_weekend_color, get_all_colors)
 from ...services.document_service import load_document, save_document
@@ -43,11 +44,9 @@ class DocumentWidget(QDialog):
         super().__init__(parent)
         self.setAttribute(Qt.WA_DeleteOnClose)
         self.is_modified = False
-        self._is_updating = False
         
         self._drag_start = None
         self._drag_val = ""
-        
         self.undo_stack = []
 
         self.doc_id = doc_id
@@ -90,7 +89,7 @@ class DocumentWidget(QDialog):
                 "Факт. время, часов", "Норма, часов"]
 
         self.setWindowTitle(title)
-        self.resize(1600, 750)
+        self.resize(1650, 800)
 
         lay = QVBoxLayout(self)
 
@@ -148,7 +147,6 @@ class DocumentWidget(QDialog):
         self.table.setSelectionBehavior(QAbstractItemView.SelectItems)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setDragDropMode(QAbstractItemView.NoDragDrop)
-        # Убрали color: black, чтобы в темной теме текст оставался читаемым
         self.table.setStyleSheet("""
             QTableWidget::item:selected {
                 border: 2px solid #1E88E5;
@@ -162,30 +160,31 @@ class DocumentWidget(QDialog):
         self.table.mouseReleaseEvent = self._table_mouse_release
 
         lay.addWidget(self.table)
+
+        # Блок расшифровки обозначений
+        legend_text = "  |  ".join([f"<b>{k}</b> — {v}" for k, v in DESIGNATIONS.items()])
+        legend_label = QLabel(legend_text)
+        legend_label.setWordWrap(True)
+        legend_label.setStyleSheet("color: #555; font-size: 11px; padding-top: 10px;")
+        lay.addWidget(legend_label)
+
         self._build_table()
         self._update_manual_ui()
 
     def _apply_item_color(self, item, code):
-        """Умная покраска: если есть цвет - используем его и контрастный текст, иначе - цвет фона программы."""
         code_colors = get_all_colors()
         if code and code in code_colors:
             bg = QColor(code_colors[code])
             item.setBackground(QBrush(bg))
-            
-            # Вычисляем контрастный цвет текста (YIQ)
             r, g, b = bg.red(), bg.green(), bg.blue()
             yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000
-            if yiq >= 128:
-                item.setForeground(QBrush(QColor("#000000"))) # Черный
-            else:
-                item.setForeground(QBrush(QColor("#FFFFFF"))) # Белый
+            item.setForeground(QBrush(QColor("#000000" if yiq >= 128 else "#FFFFFF")))
         else:
-            # Сбрасываем цвета на дефолтные цвета программы (фон и контрастный текст)
             item.setData(Qt.BackgroundRole, None)
             item.setData(Qt.ForegroundRole, None)
 
     def _build_table(self):
-        self._is_updating = True
+        self.table.blockSignals(True)
         n_rows = len(self.data["rows"])
         n_days = self.last_day
         n_cols = 3 + n_days + len(self.summary_keys)
@@ -254,8 +253,14 @@ class DocumentWidget(QDialog):
             move_layout.addWidget(btn_down)
             self.table.setCellWidget(gr, 0, move_widget)
 
-            self.table.setItem(gr, 1, QTableWidgetItem(row["employee_name"]))
-            self.table.setItem(gr, 2, QTableWidgetItem(row["employee_position"]))
+            # ФИО и Должность - запрет на редактирование
+            name_item = QTableWidgetItem(row["employee_name"])
+            name_item.setFlags(name_item.flags() & ~Qt.ItemIsEditable)
+            self.table.setItem(gr, 1, name_item)
+            
+            pos_item = QTableWidgetItem(row["employee_position"])
+            pos_item.setFlags(pos_item.flags() & ~Qt.ItemIsEditable)
+            self.table.setItem(gr, 2, pos_item)
             
             for d in range(1, n_days + 1):
                 code = row["cells"].get(d, "")
@@ -276,13 +281,12 @@ class DocumentWidget(QDialog):
                 self.table.setItem(gr, col, it)
 
         self.table.resizeRowsToContents()
-        self._is_updating = False
+        self.table.blockSignals(False)
 
     def _save_undo(self):
-        if not self._is_updating:
-            self.undo_stack.append(copy.deepcopy(self.data))
-            if len(self.undo_stack) > 50:
-                self.undo_stack.pop(0)
+        self.undo_stack.append(copy.deepcopy(self.data))
+        if len(self.undo_stack) > 50:
+            self.undo_stack.pop(0)
 
     def _undo(self):
         if not self.undo_stack:
@@ -296,7 +300,7 @@ class DocumentWidget(QDialog):
         if not sel:
             return
         self._save_undo()
-        self._is_updating = True
+        self.table.blockSignals(True)
         for idx in sel:
             r, c = idx.row(), idx.column()
             if r < 2 or c < 3 or c > 2 + self.last_day:
@@ -306,7 +310,7 @@ class DocumentWidget(QDialog):
                 item.setText("")
                 self._apply_item_color(item, "")
                 self.data["rows"][r-2]["cells"][c-2] = ""
-        self._is_updating = False
+        self.table.blockSignals(False)
         
         rows_to_update = set(idx.row() for idx in sel if idx.row() >= 2)
         for r in rows_to_update:
@@ -346,7 +350,7 @@ class DocumentWidget(QDialog):
                 r0, c0 = self._drag_start
                 
                 if r == r0 and c != c0:
-                    self._is_updating = True
+                    self.table.blockSignals(True)
                     min_c, max_c = min(c0, c), max(c0, c)
                     
                     for j in range(min_c, max_c + 1):
@@ -355,7 +359,7 @@ class DocumentWidget(QDialog):
                             item.setText(self._drag_val)
                             self._apply_item_color(item, self._drag_val)
                     
-                    self._is_updating = False
+                    self.table.blockSignals(False)
                     self.is_modified = True
                     
                     if r > 1 and not self.manual_mode:
@@ -392,8 +396,6 @@ class DocumentWidget(QDialog):
         return calc_transport_timesheet(proxy, self.year, self.month, norm_hours, holidays, use_7h)
 
     def on_item_changed(self, item):
-        if self._is_updating:
-            return
         self._save_undo()
         self.is_modified = True
         
@@ -408,17 +410,17 @@ class DocumentWidget(QDialog):
             code = item.text()
             self.data["rows"][r_idx]["cells"][c - 2] = code
             
-            self._is_updating = True # Защита от рекурсии при смене цвета
+            self.table.blockSignals(True)
             self._apply_item_color(item, code)
-            self._is_updating = False
+            self.table.blockSignals(False)
 
             if not self.manual_mode:
                 res = self._calculate(self.data["rows"][r_idx])
-                self._is_updating = True
+                self.table.blockSignals(True)
                 for i, key in enumerate(self.summary_keys):
                     col = 3 + n_days + i
                     self.table.item(r, col).setText(str(res.get(key, "")))
-                self._is_updating = False
+                self.table.blockSignals(False)
 
         elif c > 2 + n_days and self.manual_mode:
             key = self.summary_keys[c - (3 + n_days)]
@@ -434,23 +436,29 @@ class DocumentWidget(QDialog):
         rows = rng.rowCount()
         cols = rng.columnCount()
         
+        # Если выделено 4 и более столбца
         if cols >= 4:
             self._save_undo()
-            pattern = []
-            for c in range(rng.leftColumn(), rng.leftColumn() + 4):
-                pattern.append(self.table.item(rng.topRow(), c).text())
+            self.table.blockSignals(True)
             
-            self._is_updating = True
+            # Идем по каждой строке в выделении
             for r in range(rng.topRow(), rng.bottomRow() + 1):
-                for c in range(rng.leftColumn(), rng.rightColumn() + 1):
-                    if c > 2 and c <= 2 + self.last_day:
-                        val = pattern[(c - rng.leftColumn()) % 4]
-                        item = self.table.item(r, c)
-                        item.setText(val)
-                        self._apply_item_color(item, val)
-                        self.data["rows"][r-2]["cells"][c-2] = val
-            self._is_updating = False
+                # Берем паттерн из первых 4 ячеек ЭТОЙ строки
+                pattern = []
+                for c in range(rng.leftColumn(), rng.leftColumn() + 4):
+                    pattern.append(self.table.item(r, c).text())
+                
+                # Заполняем от 4-й ячейки до конца месяца
+                for c in range(rng.leftColumn() + 4, 3 + self.last_day):
+                    val = pattern[(c - rng.leftColumn()) % 4]
+                    item = self.table.item(r, c)
+                    item.setText(val)
+                    self._apply_item_color(item, val)
+                    self.data["rows"][r-2]["cells"][c-2] = val
             
+            self.table.blockSignals(False)
+            
+            # Пересчитываем итоги для всех затронутых строк
             rows_to_update = set(range(rng.topRow(), rng.bottomRow() + 1))
             for r in rows_to_update:
                 if not self.manual_mode:
@@ -459,7 +467,7 @@ class DocumentWidget(QDialog):
                         self.table.item(r, 3 + self.last_day + i).setText(str(res.get(key, "")))
             self.is_modified = True
         else:
-            self.show_warning("Выделите минимум 4 ячейки по горизонтали в первой строке, и нужное количество строк вниз.")
+            self.show_warning("Выделите минимум 4 ячейки по горизонтали.")
 
     def show_warning(self, text):
         self.banner.setText(text)
@@ -501,7 +509,7 @@ class DocumentWidget(QDialog):
         code = self.code_combo.currentText()
         n_days = self.last_day
         self._save_undo()
-        self._is_updating = True
+        self.table.blockSignals(True)
         for idx in self.table.selectedIndexes():
             r = idx.row() - 2
             c = idx.column()
@@ -512,7 +520,7 @@ class DocumentWidget(QDialog):
             item = self.table.item(idx.row(), idx.column())
             item.setText(code)
             self._apply_item_color(item, code)
-        self._is_updating = False
+        self.table.blockSignals(False)
         
         for r_idx in range(len(self.data["rows"])):
             if not self.manual_mode:
@@ -555,7 +563,7 @@ class DocumentWidget(QDialog):
             self.close() 
         elif event.key() in (Qt.Key_Backspace, Qt.Key_Delete):
             self._clear_selected()
-        elif event.matches(QKeyEvent.ControlModifier | Qt.Key_Z):
+        elif event.matches(QKeySequence.Undo):
             self._undo()
         else:
             super().keyPressEvent(event)
