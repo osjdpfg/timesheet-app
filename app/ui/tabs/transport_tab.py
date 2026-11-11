@@ -33,8 +33,9 @@ class TransportTab(QWidget):
     def refresh(self):
         self.list_widget.clear()
         for d in list_documents(group="transport"):
-            did, dt, grp, yr, mn = d
-            item = QListWidgetItem(f"Табель за {MONTHS_RU[mn - 1]} {yr}")
+            did, dt, grp, yr, mn, inst = d
+            suffix = f" ({inst})" if inst > 0 else ""
+            item = QListWidgetItem(f"Табель за {MONTHS_RU[mn - 1]} {yr}{suffix}")
             item.setData(0x100, did)
             self.list_widget.addItem(item)
 
@@ -45,6 +46,17 @@ class TransportTab(QWidget):
             if not employees:
                 QMessageBox.warning(self, "Пусто", "Не выбрано ни одного сотрудника")
                 return
+            
+            existing = [doc for doc in list_documents("timesheet", "transport") if doc[3] == year and doc[4] == month]
+            if existing:
+                r = QMessageBox.question(
+                    self, "Документ уже существует",
+                    f"За {MONTHS_RU[month-1]} {year} уже есть табель.\n\nСоздать еще один?",
+                    QMessageBox.Yes | QMessageBox.No
+                )
+                if r != QMessageBox.Yes:
+                    return
+
             doc_id = create_document("timesheet", "transport", year, month, employees)
             self.refresh()
             
