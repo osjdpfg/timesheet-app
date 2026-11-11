@@ -20,20 +20,17 @@ class NewDocumentDialog(QDialog):
         self.doc_type = doc_type
 
         lay = QVBoxLayout(self)
-
         row = QHBoxLayout()
         row.addWidget(QLabel("Месяц:"))
         self.month_combo = QComboBox()
         for i, m in enumerate(MONTHS_RU):
             self.month_combo.addItem(m, i + 1)
         row.addWidget(self.month_combo)
-
         row.addWidget(QLabel("Год:"))
         self.year_combo = QComboBox()
         years = list_years()
         if not years:
-            QMessageBox.warning(self, "Нет годов",
-                                "Сначала добавьте год в разделе «Общие настройки»")
+            QMessageBox.warning(self, "Нет годов", "Сначала добавьте год в разделе «Общие настройки»")
             self.reject()
             return
         for y in years:
@@ -47,14 +44,12 @@ class NewDocumentDialog(QDialog):
             r2.addWidget(QLabel("На основе графика:"))
             self.schedule_combo = QComboBox()
             self.schedule_combo.addItem("(без графика)", None)
-            
             docs = list_documents("schedule", "security")
             docs.sort(key=lambda x: x[0], reverse=True)
             for d in docs:
                 did, dt, grp, yr, mn, inst = d
                 suffix = f" ({inst})" if inst > 0 else ""
                 self.schedule_combo.addItem(f"{MONTHS_RU[mn - 1]} {yr}{suffix}", did)
-            
             r2.addWidget(self.schedule_combo)
             lay.addLayout(r2)
 
@@ -63,7 +58,6 @@ class NewDocumentDialog(QDialog):
         self.table.setHorizontalHeaderLabels(["", "ФИО", "Должность"])
         
         emps = [e for e in list_employees(group) if not e[4]]
-        
         self.employees_data = emps
         self.table.setRowCount(len(emps))
         for i, e in enumerate(emps):
@@ -87,7 +81,8 @@ class NewDocumentDialog(QDialog):
             cb = self.table.cellWidget(i, 0)
             if cb and cb.isChecked():
                 e = self.employees_data[i]
-                selected.append((e[1], e[2]))
+                # Передаем (name, pos, auto_7h)
+                selected.append((e[1], e[2], e[5]))
         src = None
         if self.schedule_combo is not None:
             src = self.schedule_combo.currentData()
@@ -101,7 +96,6 @@ class OpenPreviousDialog(QDialog):
         self.resize(400, 400)
         self.group = group
         lay = QVBoxLayout(self)
-
         row = QHBoxLayout()
         row.addWidget(QLabel("Год:"))
         self.year_combo = QComboBox()
@@ -114,7 +108,6 @@ class OpenPreviousDialog(QDialog):
         self.list_widget = QListWidget()
         self.list_widget.itemDoubleClicked.connect(self.accept)
         lay.addWidget(self.list_widget)
-
         btns = QDialogButtonBox(QDialogButtonBox.Open | QDialogButtonBox.Cancel)
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
@@ -197,10 +190,8 @@ class SecurityTab(QWidget):
                 if r != QMessageBox.Yes:
                     return
 
-            doc_id = create_document(doc_type, "security", year, month,
-                                     employees, source)
+            doc_id = create_document(doc_type, "security", year, month, employees, source)
             self.refresh()
-            
             w = DocumentWidget(doc_id, self)
             w.show()
             self.open_windows.append(w)
