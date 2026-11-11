@@ -6,7 +6,8 @@ from datetime import date
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                                 QTableWidget, QTableWidgetItem, QLabel,
                                 QComboBox, QMessageBox, QFileDialog,
-                                QAbstractItemView, QWidget)
+                                QAbstractItemView, QWidget, QGridLayout, QCheckBox,
+                                QDialogButtonBox)
 from PySide6.QtGui import QColor, QBrush, QFont, QKeyEvent, QKeySequence, QPalette
 from PySide6.QtCore import Qt, QTimer
 
@@ -17,14 +18,15 @@ from ...core.calculations import (calc_security_schedule,
 from ...core.designations import DESIGNATIONS
 from ...services.settings_service import (get_year_month, use_7h_enabled,
                                            get_weekend_color, get_all_colors,
-                                           get_setting, set_setting)
+                                           get_setting, set_setting, list_years)
 from ...services.document_service import load_document, save_document
+from ...services.employee_service import list_employees
+from ...services.document_service import get_linked_timesheets, update_document_structure
 from ...export.excel_export import export_document_to_excel
 
 
 def allowed_codes(group, doc_type, position):
     if group == "security":
-        # Добавили "8" для всех должностей
         return ["15", "9", "8", "7", "В", "О", "Б", "А", "П", "С", "МО", ""]
     return ["8", "7", "Р", "К", "СЗ", "МО", "Б", "О", "А", "П", "В", ""]
 
@@ -37,6 +39,68 @@ class _CellProxy:
     def __init__(self, day, code):
         self.day = day
         self.code = code
+
+
+class EditDocumentDialog(QDialog):
+    def __init__(self, doc_data, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Редактировать документ")
+        self.resize(500, 550)
+        self.doc_data = doc_data
+        
+        lay = QVBoxLayout(self)
+        grid = QGridLayout()
+        
+        grid.addWidget(QLabel("Месяц:"), 0, 0)
+        self.month_combo = QComboBox()
+        for i, m in enumerate(MONTHS_RU):
+            self.month_combo.addItem(m, i + 1)
+        self.month_combo.setCurrentIndex(doc_data["month"] - 1)
+        grid.addWidget(self.month_combo, 0, 1)
+
+        grid.addWidget(QLabel("Год:"), 0, 2)
+        self.year_combo = QComboBox()
+        for y in list_years():
+            self.year_combo.addItem(str(y), y)
+        idx = self.year_combo.findData(doc_data["year"])
+        if idx >= 0: self.year_combo.setCurrentIndex(idx)
+        grid.addWidget(self.year_combo, 0, 3)
+        
+        lay.addLayout(grid)
+        
+        lay.addWidget(QLabel("Сотрудники:"))
+        self.table = QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(["", "ФИО", "Должность"])
+        
+        emps = [e for e in list_employees(doc_data["group"]) if not e[4]]
+        active_keys = { (r["employee_name"], r["employee_position"]) for r in doc_data["rows"] }
+        
+        self.employees_data = emps
+        self.table.setRowCount(len(emps))
+        for i, e in enumerate(emps):
+            cb = QCheckBox()
+            if (e[1], e[2]) in active_keys:
+                cb.setChecked(True)
+            self.table.setCellWidget(i, 0, cb)
+            self.table.setItem(i, 1, QTableWidgetItem(e[1]))
+            self.table.setItem(i, 2, QTableWidgetItem(e[2]))
+        lay.addWidget(self.table)
+        
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        lay.addWidget(btns)
+        
+    def get_result(self):
+        month = self.month_combo.currentData()
+        year = self.year_combo.currentData()
+        selected = []
+        for i in range(self.table.rowCount()):
+            cb = self.table.cellWidget(i, 0)
+            if cb and cb.isChecked():
+                e = self.employees_data[i]
+                selected.append((e[1], e[2], e[5]))
+        return year, month, selected
 
 
 class DocumentWidget(QDialog):
@@ -62,25 +126,16 @@ class DocumentWidget(QDialog):
         self.doc_type = data["doc_type"]
         self.manual_mode = data["manual_mode"]
         self.last_day = calendar.monthrange(self.year, self.month)[1]
-        
-        inst_num = data.get("instance_number", 0)
-        suffix = f" ({inst_num})" if inst_num > 0 else ""
 
         if self.doc_type == "schedule":
-            title = (f"График группы по охранному обеспечению "
-                     f"на {MONTHS_RU[self.month - 1]} {self.year} г.{suffix}")
             self.summary_keys = ["Факт. работы", "Отпуск", "Всего", "Норма", "Ознакомлен"]
         elif self.group == "security":
-            title = (f"Табель группы по охранному обеспечению "
-                     f"на {MONTHS_RU[self.month - 1]} {self.year} г.{suffix}")
             self.summary_keys = [
                 "Факт. работы", "Медицинский осмотр", "Болезнь", "Справка",
                 "Отпуск", "Прогул", "Отпуск без сохранения з/п",
                 "Всего", "Норма", "Переработка", "Работа в ночь",
                 "Работа в праздничные дни"]
         else:
-            title = (f"Табель транспортной группы "
-                     f"на {MONTHS_RU[self.month - 1]} {self.year} г.{suffix}")
             self.summary_keys = [
                 "Факт. работы, дни", "Командировка, дни",
                 "Разъездной характер работы", "Расчет по среднему",
@@ -88,9 +143,7 @@ class DocumentWidget(QDialog):
                 "Отпуск без сохранения з/п", "Прогул",
                 "Факт. время, часов", "Норма, часов"]
 
-        self.setWindowTitle(title)
         self.resize(1650, 800)
-
         lay = QVBoxLayout(self)
 
         self.banner = QLabel("")
@@ -98,15 +151,20 @@ class DocumentWidget(QDialog):
         self.banner.setVisible(False)
         lay.addWidget(self.banner)
 
-        h = QLabel(title)
+        self.title_label = QLabel()
         f = QFont()
         f.setPointSize(12)
         f.setBold(True)
-        h.setFont(f)
-        h.setAlignment(Qt.AlignCenter)
-        lay.addWidget(h)
+        self.title_label.setFont(f)
+        self.title_label.setAlignment(Qt.AlignCenter)
+        lay.addWidget(self.title_label)
+        self._update_title()
 
         tools = QHBoxLayout()
+        btn_edit_doc = QPushButton("Редактировать")
+        btn_edit_doc.clicked.connect(self.edit_document_settings)
+        tools.addWidget(btn_edit_doc)
+
         self.btn_manual = QPushButton()
         self.btn_manual.clicked.connect(self.toggle_manual)
         tools.addWidget(self.btn_manual)
@@ -143,7 +201,6 @@ class DocumentWidget(QDialog):
 
         self.table = QTableWidget()
         self.table.verticalHeader().setVisible(False)
-        
         self.table.setSelectionBehavior(QAbstractItemView.SelectItems)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setDragDropMode(QAbstractItemView.NoDragDrop)
@@ -170,6 +227,44 @@ class DocumentWidget(QDialog):
         self._build_table()
         self._update_manual_ui()
 
+    def _update_title(self):
+        inst_num = self.data.get("instance_number", 0)
+        suffix = f" ({inst_num})" if inst_num > 0 else ""
+        if self.doc_type == "schedule":
+            title = f"График группы по охранному обеспечению на {MONTHS_RU[self.month - 1]} {self.year} г.{suffix}"
+        elif self.group == "security":
+            title = f"Табель группы по охранному обеспечению на {MONTHS_RU[self.month - 1]} {self.year} г.{suffix}"
+        else:
+            title = f"Табель транспортной группы на {MONTHS_RU[self.month - 1]} {self.year} г.{suffix}"
+        self.setWindowTitle(title)
+        self.title_label.setText(title)
+
+    def edit_document_settings(self):
+        if self.doc_type == "schedule":
+            linked = get_linked_timesheets(self.doc_id)
+            if linked:
+                r = QMessageBox.question(
+                    self, "Внимание", 
+                    "К этому графику привязан табель.\n\n"
+                    "Изменения сотрудников и месяца отразятся и на нём.\n"
+                    "Продолжить?",
+                    QMessageBox.Yes | QMessageBox.No
+                )
+                if r != QMessageBox.Yes:
+                    return
+                    
+        d = EditDocumentDialog(self.data, self)
+        if d.exec():
+            new_year, new_month, employees = d.get_result()
+            if update_document_structure(self.doc_id, new_year, new_month, employees):
+                self.data = load_document(self.doc_id)
+                self.year = new_year
+                self.month = new_month
+                self.last_day = calendar.monthrange(self.year, self.month)[1]
+                self._update_title()
+                self._build_table()
+                self.is_modified = True
+
     def _apply_item_color(self, item, code):
         code_colors = get_all_colors()
         if code and code in code_colors:
@@ -192,7 +287,6 @@ class DocumentWidget(QDialog):
         self.table.setRowCount(n_rows + 2)
         self.table.setColumnCount(n_cols)
 
-        # Восстанавливаем ширины из базы
         saved_widths = {}
         raw_widths = get_setting(f"col_widths_{self.doc_id}", "{}")
         try:
@@ -200,7 +294,6 @@ class DocumentWidget(QDialog):
         except Exception:
             pass
 
-        # Применяем ширины (если сохранены) или ставим дефолтные
         for c in range(n_cols):
             key = str(c)
             if key in saved_widths:
@@ -634,5 +727,5 @@ class DocumentWidget(QDialog):
             else:
                 event.ignore()
         else:
-            self._save_widths() # Сохраняем ширины даже если не было изменений в данных
+            self._save_widths()
             event.accept()
