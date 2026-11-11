@@ -48,12 +48,12 @@ class NewDocumentDialog(QDialog):
             self.schedule_combo = QComboBox()
             self.schedule_combo.addItem("(без графика)", None)
             
-            # Сортируем графики: самый свежий (по ID) будет первым
             docs = list_documents("schedule", "security")
             docs.sort(key=lambda x: x[0], reverse=True)
             for d in docs:
-                did, dt, grp, yr, mn = d
-                self.schedule_combo.addItem(f"{MONTHS_RU[mn - 1]} {yr}", did)
+                did, dt, grp, yr, mn, inst = d
+                suffix = f" ({inst})" if inst > 0 else ""
+                self.schedule_combo.addItem(f"{MONTHS_RU[mn - 1]} {yr}{suffix}", did)
             
             r2.addWidget(self.schedule_combo)
             lay.addLayout(r2)
@@ -62,7 +62,6 @@ class NewDocumentDialog(QDialog):
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(["", "ФИО", "Должность"])
         
-        # ИСКЛЮЧАЕМ ПОДПИСАНТОВ
         emps = [e for e in list_employees(group) if not e[4]]
         
         self.employees_data = emps
@@ -128,11 +127,12 @@ class OpenPreviousDialog(QDialog):
         if not year:
             return
         for d in list_documents(group=self.group):
-            did, dt, grp, yr, mn = d
+            did, dt, grp, yr, mn, inst = d
             if yr != year:
                 continue
             title = "График" if dt == "schedule" else "Табель"
-            item = QListWidgetItem(f"{title} за {MONTHS_RU[mn - 1]}")
+            suffix = f" ({inst})" if inst > 0 else ""
+            item = QListWidgetItem(f"{title} за {MONTHS_RU[mn - 1]}{suffix}")
             item.setData(0x100, did)
             self.list_widget.addItem(item)
 
@@ -171,9 +171,10 @@ class SecurityTab(QWidget):
     def refresh(self):
         self.list_widget.clear()
         for d in list_documents(group="security"):
-            did, dt, grp, yr, mn = d
+            did, dt, grp, yr, mn, inst = d
             title = "График" if dt == "schedule" else "Табель"
-            item = QListWidgetItem(f"{title} за {MONTHS_RU[mn - 1]} {yr}")
+            suffix = f" ({inst})" if inst > 0 else ""
+            item = QListWidgetItem(f"{title} за {MONTHS_RU[mn - 1]} {yr}{suffix}")
             item.setData(0x100, did)
             self.list_widget.addItem(item)
 
@@ -184,11 +185,22 @@ class SecurityTab(QWidget):
             if not employees:
                 QMessageBox.warning(self, "Пусто", "Не выбрано ни одного сотрудника")
                 return
+            
+            existing = [doc for doc in list_documents(doc_type, "security") if doc[3] == year and doc[4] == month]
+            if existing:
+                name = "график" if doc_type == "schedule" else "табель"
+                r = QMessageBox.question(
+                    self, "Документ уже существует",
+                    f"За {MONTHS_RU[month-1]} {year} уже есть {name}.\n\nСоздать еще один?",
+                    QMessageBox.Yes | QMessageBox.No
+                )
+                if r != QMessageBox.Yes:
+                    return
+
             doc_id = create_document(doc_type, "security", year, month,
                                      employees, source)
             self.refresh()
             
-            # Немодальное окно
             w = DocumentWidget(doc_id, self)
             w.show()
             self.open_windows.append(w)
