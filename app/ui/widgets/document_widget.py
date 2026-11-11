@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                                 QTableWidget, QTableWidgetItem, QLabel,
                                 QComboBox, QMessageBox, QFileDialog,
                                 QAbstractItemView, QWidget)
-from PySide6.QtGui import QColor, QBrush, QFont, QKeyEvent, QKeySequence
+from PySide6.QtGui import QColor, QBrush, QFont, QKeyEvent, QKeySequence, QPalette
 from PySide6.QtCore import Qt, QTimer
 
 from ...config import MONTHS_RU, WEEKDAYS_RU
@@ -208,7 +208,14 @@ class DocumentWidget(QDialog):
         self.table.setSpan(0, 2, 2, 1)
         self.table.setItem(0, 2, QTableWidgetItem("Должность"))
 
-        weekend_color = QColor(get_weekend_color())
+        # Автоматический подбор цвета для шапки выходных (светлее/темнее фона)
+        base_color = self.table.palette().color(QPalette.Base)
+        if base_color.lightness() < 128:
+            # Если тема темная — делаем светлее на пару тонов
+            weekend_header_color = base_color.lighter(135)
+        else:
+            # Если тема светлая — делаем чуть темнее, чтобы выделялось
+            weekend_header_color = base_color.darker(105)
 
         for d in range(1, n_days + 1):
             col = 2 + d
@@ -220,8 +227,8 @@ class DocumentWidget(QDialog):
             dt.setTextAlignment(Qt.AlignCenter)
             self.table.setItem(1, col, dt)
             if dow >= 5:
-                wd.setBackground(QBrush(weekend_color))
-                dt.setBackground(QBrush(weekend_color))
+                wd.setBackground(QBrush(weekend_header_color))
+                dt.setBackground(QBrush(weekend_header_color))
 
         for i, key in enumerate(self.summary_keys):
             col = 3 + n_days + i
