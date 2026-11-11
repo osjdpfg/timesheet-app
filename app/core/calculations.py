@@ -38,22 +38,15 @@ def calc_security_schedule(row, year, month, norm_hours, holidays_str, use_7h):
     holidays = _holidays_set(holidays_str)
     auto_7h = getattr(row, "auto_7h", False)
     
-    # Факт работы (в днях/сменах)
     fact = _count(cells, {"15", "9", "8", "7"})
-    
-    # Всего (в часах)
-    total_hours = (_count(cells, {"15"}) * 15 + 
-                   _count(cells, {"9"}) * 9 + 
-                   _count(cells, {"8"}) * 8 + 
-                   _count(cells, {"7"}) * 7)
-                   
+    total_hours = (_count(cells, {"15"}) * 15 + _count(cells, {"9"}) * 9 + 
+                   _count(cells, {"8"}) * 8 + _count(cells, {"7"}) * 7)
     vac = _count(cells, {"О"})
     
     if vac > 0 or _count(cells, {"А"}) > 0:
         norm = _norm_with_vacation(year, month, holidays, cells, use_7h, auto_7h)
     else:
         norm = norm_hours
-        
     return {"Факт. работы": fact, "Отпуск": vac, "Всего": total_hours, "Норма": norm, "Ознакомлен": ""}
 
 def calc_security_timesheet(row, year, month, norm_hours, holidays_str, use_7h):
@@ -61,20 +54,20 @@ def calc_security_timesheet(row, year, month, norm_hours, holidays_str, use_7h):
     holidays = _holidays_set(holidays_str)
     auto_7h = getattr(row, "auto_7h", False)
     
-    # Факт работы (в днях/сменах)
     fact = _count(cells, {"15", "9", "8", "7"})
+    total_hours = (_count(cells, {"15"}) * 15 + _count(cells, {"9"}) * 9 + 
+                   _count(cells, {"8"}) * 8 + _count(cells, {"7"}) * 7)
     
-    # Всего (в часах)
-    total_hours = (_count(cells, {"15"}) * 15 + 
-                   _count(cells, {"9"}) * 9 + 
-                   _count(cells, {"8"}) * 8 + 
-                   _count(cells, {"7"}) * 7)
-    
-    # Ночные часы считаем только для 15 и 9
     night = _count(cells, {"15"}) * 2 + _count(cells, {"9"}) * 6
     
-    # Работа в праздники только для 15 и 9
-    hol_work = sum(1 for d, c in cells.items() if d in holidays and c in {"15", "9"})
+    # Работа в праздничные дни (в часах)
+    hol_work = 0
+    for d, c in cells.items():
+        if d in holidays:
+            if c == "15": hol_work += 15
+            elif c == "9": hol_work += 9
+            elif c == "8": hol_work += 8
+            elif c == "7": hol_work += 7
         
     mo = _count(cells, {"МО"})
     sick = _count(cells, {"Б"})
@@ -88,7 +81,6 @@ def calc_security_timesheet(row, year, month, norm_hours, holidays_str, use_7h):
     else:
         norm = norm_hours
         
-    # Переработка = Всего (часов) - Норма (часов)
     perer = total_hours - norm if total_hours > norm else 0
     
     return {
@@ -99,7 +91,7 @@ def calc_security_timesheet(row, year, month, norm_hours, holidays_str, use_7h):
         "Отпуск": vac,
         "Прогул": progul,
         "Отпуск без сохранения з/п": unpaid,
-        "Всего": total_hours, # <--- Теперь тут часы
+        "Всего": total_hours,
         "Норма": norm,
         "Переработка": perer,
         "Работа в ночь": night,
@@ -120,7 +112,6 @@ def calc_transport_timesheet(row, year, month, norm_hours, holidays_str, use_7h)
     vac = _count(cells, {"О"})
     unpaid = _count(cells, {"А"})
     progul = _count(cells, {"П"}) * 8
-    
     fact_hours = 0
     for c in cells.values():
         if c in ("8", "Р"):
