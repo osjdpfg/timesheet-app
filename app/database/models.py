@@ -38,7 +38,7 @@ class Employee(Base):
     position = Column(String, default="")
     group = Column(String, default="security")
     is_signatory = Column(Boolean, default=False)
-    auto_7h = Column(Boolean, default=False) # <--- НОВОЕ
+    auto_7h = Column(Boolean, default=False)
 
 
 class Document(Base):
@@ -49,6 +49,7 @@ class Document(Base):
     year = Column(Integer, nullable=False)
     month = Column(Integer, nullable=False)
     instance_number = Column(Integer, default=0)
+    linked_schedule_id = Column(Integer, ForeignKey("documents.id"), nullable=True) # <--- НОВОЕ
     manual_mode = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     rows = relationship("DocumentRow", cascade="all, delete-orphan",
@@ -61,7 +62,7 @@ class DocumentRow(Base):
     document_id = Column(Integer, ForeignKey("documents.id"), nullable=False)
     employee_name = Column(String, default="")
     employee_position = Column(String, default="")
-    auto_7h = Column(Boolean, default=False) # <--- НОВОЕ
+    auto_7h = Column(Boolean, default=False)
     document = relationship("Document", back_populates="rows")
     cells = relationship("DocumentCell", cascade="all, delete-orphan",
                          back_populates="row")
