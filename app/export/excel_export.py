@@ -27,6 +27,7 @@ def _proxy(row):
     p = _Row()
     p.employee_name = row["employee_name"]
     p.employee_position = row["employee_position"]
+    p.auto_7h = row.get("auto_7h", False) # <--- Передаем флаг
     p.cells = [_Cell(d, c) for d, c in row["cells"].items()]
     return p
 
@@ -46,7 +47,6 @@ def export_document_to_excel(doc_id, path):
     weekend_color = get_setting("weekend_color", "#FFE0B2").replace("#", "")
     manual_mode = data["manual_mode"]
     
-    # Получаем номер копии (1), (2) и т.д.
     inst_num = data.get("instance_number", 0)
     suffix = f" ({inst_num})" if inst_num > 0 else ""
 
@@ -75,20 +75,17 @@ def export_document_to_excel(doc_id, path):
     ws = wb.active
     total_cols = 2 + last_day + len(summary)
 
-    # Стили
     thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), 
                          top=Side(style='thin'), bottom=Side(style='thin'))
     center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
     weekend_fill = PatternFill(start_color=weekend_color, end_color=weekend_color, fill_type="solid")
 
-    # Заголовок
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=total_cols)
     c = ws.cell(row=1, column=1, value=title)
     c.alignment = Alignment(horizontal="center", vertical="center")
     c.font = Font(bold=True, size=12)
     ws.row_dimensions[1].height = 25
 
-    # Шапка
     ws.cell(row=3, column=1, value="ФИО")
     ws.merge_cells(start_row=3, start_column=1, end_row=4, end_column=1)
     ws.cell(row=3, column=2, value="Должность")
@@ -117,7 +114,6 @@ def export_document_to_excel(doc_id, path):
         h.alignment = center_align
         h.border = thin_border
 
-    # Строки данных
     row_num = 5
     for row in data["rows"]:
         c_name = ws.cell(row=row_num, column=1, value=row["employee_name"])
@@ -152,25 +148,13 @@ def export_document_to_excel(doc_id, path):
 
         row_num += 1
 
-    # Легенда
-    row_num += 2
-    legend = ["В - выходной", "Б - Болезнь", "О - отпуск",
-              "С - справка", "П - прогул", "СЗ - средний заработок",
-              "МО - мед.осмотр", "А - отпуск без сохранения З/П",
-              "К - командировка", "Р - разъездной"]
-    col = 1
-    for item in legend:
-        ws.cell(row=row_num, column=col, value=item)
-        col += 4
-
-    # Подпись
+    # Блок подписи (без легенды)
     sig_name, sig_pos = get_signatory(group)
     if sig_name:
         row_num += 3
         ws.cell(row=row_num, column=2, value=sig_pos or "Главный механик")
         ws.cell(row=row_num, column=12, value=sig_name)
 
-    # Ширина колонок
     ws.column_dimensions["A"].width = 30
     ws.column_dimensions["B"].width = 25
     for d in range(1, last_day + 1):
