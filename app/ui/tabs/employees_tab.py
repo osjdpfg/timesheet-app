@@ -19,12 +19,19 @@ class EmployeeDialog(QDialog):
         self.group.addItem("Транспортная группа", "transport")
         if data:
             self.group.setCurrentIndex(0 if data[3] == "security" else 1)
+            
         self.sig = QCheckBox("Подписант (выводится внизу документа)")
         self.sig.setChecked(bool(data[4]) if data else False)
+        
+        self.auto_7h = QCheckBox("Автоматический учет сокращенного дня (8 → 7)")
+        self.auto_7h.setChecked(bool(data[5]) if data and len(data) > 5 else False)
+
         form.addRow("ФИО:", self.name)
         form.addRow("Должность:", self.position)
         form.addRow("Группа:", self.group)
         form.addRow("", self.sig)
+        form.addRow("", self.auto_7h)
+        
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
@@ -32,7 +39,7 @@ class EmployeeDialog(QDialog):
 
     def get_data(self):
         return (self.name.text().strip(), self.position.text().strip(),
-                self.group.currentData(), self.sig.isChecked())
+                self.group.currentData(), self.sig.isChecked(), self.auto_7h.isChecked())
 
 
 class EmployeesTab(QWidget):
@@ -52,9 +59,9 @@ class EmployeesTab(QWidget):
         top.addStretch()
         lay.addLayout(top)
 
-        self.table = QTableWidget(0, 4)
+        self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(
-            ["ФИО", "Должность", "Группа", "Подписант"])
+            ["ФИО", "Должность", "Группа", "Подписант", "Сокр. день"])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.doubleClicked.connect(self.edit)
@@ -67,17 +74,17 @@ class EmployeesTab(QWidget):
         for i, e in enumerate(emps):
             self.table.setItem(i, 0, QTableWidgetItem(e[1]))
             self.table.setItem(i, 1, QTableWidgetItem(e[2]))
-            self.table.setItem(i, 2, QTableWidgetItem(
-                "Охранная" if e[3] == "security" else "Транспортная"))
+            self.table.setItem(i, 2, QTableWidgetItem("Охранная" if e[3] == "security" else "Транспортная"))
             self.table.setItem(i, 3, QTableWidgetItem("Да" if e[4] else ""))
+            self.table.setItem(i, 4, QTableWidgetItem("Да" if e[5] else ""))
             self.table.item(i, 0).setData(0x100, e[0])
 
     def add(self):
         d = EmployeeDialog(self)
         if d.exec():
-            name, pos, grp, sig = d.get_data()
+            name, pos, grp, sig, auto7 = d.get_data()
             if name:
-                add_employee(name, pos, grp, sig)
+                add_employee(name, pos, grp, sig, auto7)
                 self.refresh()
 
     def edit(self):
@@ -87,13 +94,13 @@ class EmployeesTab(QWidget):
         eid = self.table.item(row, 0).data(0x100)
         data = (eid, self.table.item(row, 0).text(),
                 self.table.item(row, 1).text(),
-                "security" if self.table.item(row, 2).text() == "Охранная"
-                else "transport",
-                self.table.item(row, 3).text() == "Да")
+                "security" if self.table.item(row, 2).text() == "Охранная" else "transport",
+                self.table.item(row, 3).text() == "Да",
+                self.table.item(row, 4).text() == "Да")
         d = EmployeeDialog(self, data)
         if d.exec():
-            name, pos, grp, sig = d.get_data()
-            update_employee(eid, name, pos, grp, sig)
+            name, pos, grp, sig, auto7 = d.get_data()
+            update_employee(eid, name, pos, grp, sig, auto7)
             self.refresh()
 
     def delete(self):
@@ -101,7 +108,6 @@ class EmployeesTab(QWidget):
         if row < 0:
             return
         eid = self.table.item(row, 0).data(0x100)
-        if QMessageBox.question(self, "Удалить",
-                                "Удалить сотрудника?") == QMessageBox.Yes:
+        if QMessageBox.question(self, "Удалить", "Удалить сотрудника?") == QMessageBox.Yes:
             delete_employee(eid)
             self.refresh()
