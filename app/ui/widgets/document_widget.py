@@ -19,8 +19,7 @@ from ...export.excel_export import export_document_to_excel
 
 
 def allowed_codes(group, doc_type, position):
-    pos = (position or "").lower()
-    is_worker = "рабочий" in pos
+    is_worker = "рабочий" in (position or "").lower()
     if group == "security":
         if is_worker:
             return ["8", "7", "В", "О", "Б", "А", "П", "С", "МО", ""]
@@ -44,7 +43,6 @@ class DocumentWidget(QDialog):
         self.setAttribute(Qt.WA_DeleteOnClose)
         self.is_modified = False
         self._is_updating = False
-        self._drag_start = None
 
         self.doc_id = doc_id
         data = load_document(doc_id)
@@ -84,7 +82,7 @@ class DocumentWidget(QDialog):
                 "Факт. время, часов", "Норма, часов"]
 
         self.setWindowTitle(title)
-        self.resize(1500, 750)
+        self.resize(1550, 750)
 
         lay = QVBoxLayout(self)
 
@@ -122,9 +120,18 @@ class DocumentWidget(QDialog):
         btn_apply.clicked.connect(self.apply_code_to_selected)
         tools.addWidget(btn_apply)
 
-        btn_autofill = QPushButton("Автозаполнить (по 4 ячейкам)")
+        btn_autofill = QPushButton("Автозаполнить (4 ячейки)")
         btn_autofill.clicked.connect(self.auto_fill_pattern)
         tools.addWidget(btn_autofill)
+
+        # Кнопки перемещения строк
+        tools.addSpacing(20)
+        self.btn_up = QPushButton("▲ Вверх")
+        self.btn_up.clicked.connect(self.move_row_up)
+        tools.addWidget(self.btn_up)
+        self.btn_down = QPushButton("▼ Вниз")
+        self.btn_down.clicked.connect(self.move_row_down)
+        tools.addWidget(self.btn_down)
 
         tools.addStretch()
 
@@ -139,15 +146,12 @@ class DocumentWidget(QDialog):
         lay.addLayout(tools)
 
         self.table = QTableWidget()
-        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.table.setDragDropMode(QAbstractItemView.InternalMove)
-        self.table.setDragDropOverwriteMode(False)
-        self.table.setDefaultDropAction(Qt.MoveAction) # Исправление Drag&Drop
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows) # Выделение строк целиком
+        self.table.setSelectionMode(QAbstractItemView.SingleSelection) # Только одна строка
+        self.table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
+        self.table.setDragDropMode(QAbstractItemView.NoDragDrop) # Отключаем Drag&Drop
         self.table.itemChanged.connect(self.on_item_changed)
-        
-        self.table.mousePressEvent = self._table_mouse_press
-        self.table.mouseMoveEvent = self._table_mouse_move
-        self.table.mouseReleaseEvent = self._table_mouse_release
+        self.table.itemSelectionChanged.connect(self.update_move_buttons)
 
         lay.addWidget(self.table)
         self._build_table()
@@ -224,6 +228,30 @@ class DocumentWidget(QDialog):
 
         self.table.resizeRowsToContents()
         self._is_updating = False
+        self.update_move_buttons()
+
+    def update_move_buttons(self):
+        row = self.table.currentRow()
+        self.btn_up.setEnabled(row > 2)
+        self.btn_down.setEnabled(row > 1 and row < self.table.rowCount() - 1)
+
+    def move_row_up(self):
+        row = self.table.currentRow()
+        if row <= 2: return
+        idx = row - 2
+        self.data["rows"][idx], self.data["rows"][idx-1] = self.data["rows"][idx-1], self.data["rows"][idx]
+        self._build_table()
+        self.table.selectRow(row - 1)
+        self.is_modified = True
+
+    def move_row_down(self):
+        row = self.table.currentRow()
+        if row < 2 or row >= self.table.rowCount() - 1: return
+        idx = row - 2
+        self.data["rows"][idx], self.data["rows"][idx+1] = self.data["rows"][idx+1], self.data["rows"][idx]
+        self._build_table()
+        self.table.selectRow(row + 1)
+        self.is_modified = True
 
     def _row_proxy(self, row):
         p = _RowProxy()
@@ -237,13 +265,10 @@ class DocumentWidget(QDialog):
         use_7h = use_7h_enabled()
         proxy = self._row_proxy(row)
         if self.doc_type == "schedule":
-            return calc_security_schedule(proxy, self.year, self.month,
-                                          norm_hours, holidays, use_7h)
+            return calc_security_schedule(proxy, self.year, self.month, norm_hours, holidays, use_7h)
         if self.group == "security":
-            return calc_security_timesheet(proxy, self.year, self.month,
-                                           norm_hours, holidays, use_7h)
-        return calc_transport_timesheet(proxy, self.year, self.month,
-                                        norm_hours, holidays, use_7h)
+            return calc_security_timesheet(proxy, self.year, self.month, norm_hours, holidays, use_7h)
+        return calc_transport_timesheet(proxy, self.year, self.month, norm_hours, holidays, use_7h)
 
     def on_item_changed(self, item):
         if self._is_updating:
@@ -315,86 +340,6 @@ class DocumentWidget(QDialog):
         self.banner.setText(text)
         self.banner.setVisible(True)
         QTimer.singleShot(4000, lambda: self.banner.setVisible(False))
-
-    def _table_mouse_press(self, event):
-        if event.button() == Qt.LeftButton:
-            idx = self.table.indexAt(event.pos())
-            if idx.isValid():
-                rect = self.table.visualRect(idx)
-                if event.pos().x() > rect.right() - 8 and event.pos().y() > rect.bottom() - 8:
-                    self._drag_start = (idx.row(), idx.column())
-                    self._drag_val = self.table.item(idx.row(), idx.column()).text()
-                    return
-        self._drag_start = None
-        QTableWidget.mousePressEvent(self.table, event)
-
-    def _table_mouse_move(self, event):
-        if getattr(self, '_drag_start', None) and event.buttons() & Qt.LeftButton:
-            idx = self.table.indexAt(event.pos())
-            if idx.isValid():
-                r, c = idx.row(), idx.column()
-                r0, c0 = self._drag_start
-                if r != r0 or c != c0:
-                    min_r, max_r = min(r0, r), max(r0, r)
-                    min_c, max_c = min(c0, c), max(c0, c)
-                    self._is_updating = True
-                    for i in range(min_r, max_r + 1):
-                        for j in range(min_c, max_c + 1):
-                            if i > 1 and j > 1:
-                                self.table.item(i, j).setText(self._drag_val)
-                    self._is_updating = False
-                    self.is_modified = True
-                    for i in range(min_r, max_r + 1):
-                        if i > 1 and not self.manual_mode:
-                            row_data = self.data["rows"][i-2]
-                            for j in range(min_c, max_c + 1):
-                                row_data["cells"][j-1] = self._drag_val
-                            res = self._calculate(row_data)
-                            for k, key in enumerate(self.summary_keys):
-                                col = 2 + self.last_day + k
-                                self.table.item(i, col).setText(str(res.get(key, "")))
-        else:
-            QTableWidget.mouseMoveEvent(self.table, event)
-
-    def _table_mouse_release(self, event):
-        self._drag_start = None
-        QTableWidget.mouseReleaseEvent(self.table, event)
-
-    # --- Drag & Drop для строк ---
-    def dropEvent(self, event):
-        if event.source() == self.table:
-            src_row = self.table.currentRow()
-            if src_row < 2:
-                event.ignore()
-                return
-
-            index = self.table.indexAt(event.pos())
-            if not index.isValid():
-                drop_row = self.table.rowCount()
-            else:
-                drop_row = index.row()
-
-            if drop_row < 2:
-                drop_row = 2
-            if drop_row > self.table.rowCount():
-                drop_row = self.table.rowCount()
-
-            if src_row != drop_row:
-                real_drop = drop_row - 2
-                if drop_row > src_row:
-                    real_drop -= 1
-
-                row_data = self.data["rows"].pop(src_row - 2)
-                self.data["rows"].insert(real_drop, row_data)
-
-                self._build_table()
-                self.is_modified = True
-                self.table.selectRow(real_drop + 2)
-
-            event.setDropAction(Qt.MoveAction)
-            event.accept()
-        else:
-            event.ignore()
 
     def _update_manual_ui(self):
         if self.manual_mode:
