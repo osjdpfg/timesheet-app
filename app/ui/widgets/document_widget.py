@@ -1,5 +1,6 @@
 import calendar
 import copy
+import json
 from datetime import date
 
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
@@ -15,17 +16,16 @@ from ...core.calculations import (calc_security_schedule,
                                    calc_transport_timesheet)
 from ...core.designations import DESIGNATIONS
 from ...services.settings_service import (get_year_month, use_7h_enabled,
-                                           get_weekend_color, get_all_colors)
+                                           get_weekend_color, get_all_colors,
+                                           get_setting, set_setting)
 from ...services.document_service import load_document, save_document
 from ...export.excel_export import export_document_to_excel
 
 
 def allowed_codes(group, doc_type, position):
-    is_worker = "рабочий" in (position or "").lower()
     if group == "security":
-        if is_worker:
-            return ["8", "7", "В", "О", "Б", "А", "П", "С", "МО", ""]
-        return ["15", "9", "В", "О", "Б", "А", "П", "С", "МО", ""]
+        # Добавили "8" для всех должностей
+        return ["15", "9", "8", "7", "В", "О", "Б", "А", "П", "С", "МО", ""]
     return ["8", "7", "Р", "К", "СЗ", "МО", "Б", "О", "А", "П", "В", ""]
 
 
@@ -161,7 +161,6 @@ class DocumentWidget(QDialog):
 
         lay.addWidget(self.table)
 
-        # Контрастная легенда
         legend_text = "  |  ".join([f"<b>{k}</b> — {v}" for k, v in DESIGNATIONS.items()])
         legend_label = QLabel(legend_text)
         legend_label.setWordWrap(True)
@@ -193,16 +192,25 @@ class DocumentWidget(QDialog):
         self.table.setRowCount(n_rows + 2)
         self.table.setColumnCount(n_cols)
 
-        self.table.setColumnWidth(0, 50)
-        
-        # Временные ширины для ФИО и Должности
-        self.table.setColumnWidth(1, 180)
-        self.table.setColumnWidth(2, 150)
-        
-        for d in range(1, n_days + 1):
-            self.table.setColumnWidth(2 + d, 30)
-        for i in range(len(self.summary_keys)):
-            self.table.setColumnWidth(3 + n_days + i, 80)
+        # Восстанавливаем ширины из базы
+        saved_widths = {}
+        raw_widths = get_setting(f"col_widths_{self.doc_id}", "{}")
+        try:
+            saved_widths = json.loads(raw_widths)
+        except Exception:
+            pass
+
+        # Применяем ширины (если сохранены) или ставим дефолтные
+        for c in range(n_cols):
+            key = str(c)
+            if key in saved_widths:
+                self.table.setColumnWidth(c, saved_widths[key])
+            else:
+                if c == 0: self.table.setColumnWidth(c, 50)
+                elif c == 1: self.table.setColumnWidth(c, 180)
+                elif c == 2: self.table.setColumnWidth(c, 150)
+                elif 3 <= c <= 2 + n_days: self.table.setColumnWidth(c, 30)
+                else: self.table.setColumnWidth(c, 80)
 
         self.table.setSpan(0, 0, 2, 1)
         top1 = QTableWidgetItem("Перем.")
@@ -219,7 +227,6 @@ class DocumentWidget(QDialog):
         top3.setFlags(top3.flags() & ~Qt.ItemIsEditable)
         self.table.setItem(0, 2, top3)
 
-        # Цвет шапки
         base_color = self.table.palette().color(QPalette.Base)
         weekend_header_color = base_color.lighter(135) if base_color.lightness() < 128 else base_color.darker(105)
 
@@ -229,12 +236,12 @@ class DocumentWidget(QDialog):
             
             wd = QTableWidgetItem(WEEKDAYS_RU[dow])
             wd.setTextAlignment(Qt.AlignCenter)
-            wd.setFlags(wd.flags() & ~Qt.ItemIsEditable) # Защита
+            wd.setFlags(wd.flags() & ~Qt.ItemIsEditable) 
             self.table.setItem(0, col, wd)
             
             dt = QTableWidgetItem(str(d))
             dt.setTextAlignment(Qt.AlignCenter)
-            dt.setFlags(dt.flags() & ~Qt.ItemIsEditable) # Защита
+            dt.setFlags(dt.flags() & ~Qt.ItemIsEditable) 
             self.table.setItem(1, col, dt)
             
             if dow >= 5:
@@ -245,7 +252,7 @@ class DocumentWidget(QDialog):
             col = 3 + n_days + i
             it = QTableWidgetItem(key)
             it.setTextAlignment(Qt.AlignCenter)
-            it.setFlags(it.flags() & ~Qt.ItemIsEditable) # Защита
+            it.setFlags(it.flags() & ~Qt.ItemIsEditable) 
             self.table.setItem(0, col, it)
             self.table.setSpan(0, col, 2, 1)
 
@@ -299,14 +306,13 @@ class DocumentWidget(QDialog):
                 self.table.setItem(gr, col, it)
 
         self.table.resizeRowsToContents()
-        
-        # Автоподбор ширины для ФИО и Должности (и итоговых граф)
-        self.table.resizeColumnToContents(1)
-        self.table.resizeColumnToContents(2)
-        for i in range(len(self.summary_keys)):
-            self.table.resizeColumnToContents(3 + n_days + i)
-
         self.table.blockSignals(False)
+
+    def _save_widths(self):
+        widths = {}
+        for c in range(self.table.columnCount()):
+            widths[str(c)] = self.table.columnWidth(c)
+        set_setting(f"col_widths_{self.doc_id}", json.dumps(widths))
 
     def _save_undo(self):
         self.undo_stack.append(copy.deepcopy(self.data))
@@ -407,7 +413,7 @@ class DocumentWidget(QDialog):
         p = _RowProxy()
         p.employee_name = row["employee_name"]
         p.employee_position = row["employee_position"]
-        p.auto_7h = row.get("auto_7h", False) # Передаем флаг
+        p.auto_7h = row.get("auto_7h", False)
         p.cells = [_CellProxy(d, c) for d, c in row["cells"].items()]
         return p
 
@@ -436,7 +442,6 @@ class DocumentWidget(QDialog):
             code = item.text()
             day = c - 2
             
-            # Автозамена 8 на 7 (если включено для сотрудника и это предпраздничный день)
             if code == "8" and self.data["rows"][r_idx].get("auto_7h", False):
                 _, holidays_str = get_year_month(self.year, self.month)
                 holidays = set(int(x.strip()) for x in holidays_str.split(',') if x.strip().isdigit())
@@ -550,7 +555,6 @@ class DocumentWidget(QDialog):
                 continue
             day = c - 2
             
-            # Автозамена
             final_code = code
             if code == "8" and self.data["rows"][r].get("auto_7h", False):
                 _, holidays_str = get_year_month(self.year, self.month)
@@ -573,6 +577,7 @@ class DocumentWidget(QDialog):
         self.is_modified = True
 
     def save(self):
+        self._save_widths()
         n_days = self.last_day
         for r_idx, row in enumerate(self.data["rows"]):
             gr = r_idx + 2
@@ -629,4 +634,5 @@ class DocumentWidget(QDialog):
             else:
                 event.ignore()
         else:
+            self._save_widths() # Сохраняем ширины даже если не было изменений в данных
             event.accept()
