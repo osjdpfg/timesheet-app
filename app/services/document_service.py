@@ -1,12 +1,18 @@
+from sqlalchemy import func
 from ..database.db import get_session
 from ..database.models import Document, DocumentRow, DocumentCell, ManualOverride
 
 
-def create_document(doc_type, group, year, month, employees,
-                    source_document_id=None):
+def create_document(doc_type, group, year, month, employees, source_document_id=None):
     s = get_session()
     try:
-        doc = Document(doc_type=doc_type, group=group, year=year, month=month)
+        # Считаем, сколько уже есть документов за этот месяц
+        max_inst = s.query(func.max(Document.instance_number)).filter_by(
+            doc_type=doc_type, group=group, year=year, month=month
+        ).scalar()
+        new_inst = 0 if max_inst is None else max_inst + 1
+
+        doc = Document(doc_type=doc_type, group=group, year=year, month=month, instance_number=new_inst)
         s.add(doc)
         s.flush()
 
@@ -41,7 +47,7 @@ def list_documents(doc_type=None, group=None):
             q = q.filter_by(doc_type=doc_type)
         if group:
             q = q.filter_by(group=group)
-        return [(d.id, d.doc_type, d.group, d.year, d.month)
+        return [(d.id, d.doc_type, d.group, d.year, d.month, d.instance_number)
                 for d in q.order_by(Document.year.desc(),
                                     Document.month.desc()).all()]
     finally:
@@ -71,6 +77,7 @@ def load_document(doc_id):
             "group": d.group,
             "year": d.year,
             "month": d.month,
+            "instance_number": d.instance_number,
             "manual_mode": d.manual_mode,
             "rows": [{
                 "id": r.id,
