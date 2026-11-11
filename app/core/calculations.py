@@ -33,24 +33,21 @@ def _norm_with_vacation(year, month, holidays, cells, use_7h, auto_7h, absence_c
         norm += h
     return norm
 
-def _is_worker(position):
-    return "рабочий" in (position or "").lower()
-
 def calc_security_schedule(row, year, month, norm_hours, holidays_str, use_7h):
     cells = _cells_to_dict(row)
     holidays = _holidays_set(holidays_str)
     auto_7h = getattr(row, "auto_7h", False)
     
-    if _is_worker(row.employee_position):
-        fact = _count(cells, {"8", "7"})
-    else:
-        fact = _count(cells, {"15", "9"})
+    # В ТЗ п.5: Факт работы — суммируется КОЛИЧЕСТВО ячеек со значениями 9, 15, 7, 8
+    fact = _count(cells, {"15", "9", "8", "7"})
     vac = _count(cells, {"О"})
     total = fact
+    
     if vac > 0 or _count(cells, {"А"}) > 0:
         norm = _norm_with_vacation(year, month, holidays, cells, use_7h, auto_7h)
     else:
         norm = norm_hours
+        
     return {"Факт. работы": fact, "Отпуск": vac, "Всего": total, "Норма": norm, "Ознакомлен": ""}
 
 def calc_security_timesheet(row, year, month, norm_hours, holidays_str, use_7h):
@@ -58,27 +55,44 @@ def calc_security_timesheet(row, year, month, norm_hours, holidays_str, use_7h):
     holidays = _holidays_set(holidays_str)
     auto_7h = getattr(row, "auto_7h", False)
     
-    if _is_worker(row.employee_position):
-        fact = _count(cells, {"8", "7"})
-        night = 0
-        hol_work = 0
-    else:
-        fact = _count(cells, {"15", "9"})
-        night = _count(cells, {"15"}) * 2 + _count(cells, {"9"}) * 6
-        hol_work = sum(1 for d, c in cells.items() if d in holidays and c in {"15", "9"})
+    # В ТЗ п.5: Факт работы — суммируется КОЛИЧЕСТВО ячеек со значениями 9, 15, 7, 8
+    fact = _count(cells, {"15", "9", "8", "7"})
+    
+    # Ночные часы считаем только для 15 и 9
+    night = _count(cells, {"15"}) * 2 + _count(cells, {"9"}) * 6
+    
+    # Работа в праздники только для 15 и 9
+    hol_work = sum(1 for d, c in cells.items() if d in holidays and c in {"15", "9"})
+        
     mo = _count(cells, {"МО"})
     sick = _count(cells, {"Б"})
     spravka = _count(cells, {"С"})
     vac = _count(cells, {"О"})
     progul = _count(cells, {"П"})
     unpaid = _count(cells, {"А"})
+    
     if vac > 0 or unpaid > 0:
         norm = _norm_with_vacation(year, month, holidays, cells, use_7h, auto_7h)
     else:
         norm = norm_hours
+        
     total = fact
     perer = total - norm if total > norm else 0
-    return {"Факт. работы": fact, "Медицинский осмотр": mo, "Болезнь": sick, "Справка": spravka, "Отпуск": vac, "Прогул": progul, "Отпуск без сохранения з/п": unpaid, "Всего": total, "Норма": norm, "Переработка": perer, "Работа в ночь": night, "Работа в праздничные дни": hol_work}
+    
+    return {
+        "Факт. работы": fact,
+        "Медицинский осмотр": mo,
+        "Болезнь": sick,
+        "Справка": spravka,
+        "Отпуск": vac,
+        "Прогул": progul,
+        "Отпуск без сохранения з/п": unpaid,
+        "Всего": total,
+        "Норма": norm,
+        "Переработка": perer,
+        "Работа в ночь": night,
+        "Работа в праздничные дни": hol_work
+    }
 
 def calc_transport_timesheet(row, year, month, norm_hours, holidays_str, use_7h):
     cells = _cells_to_dict(row)
@@ -104,4 +118,17 @@ def calc_transport_timesheet(row, year, month, norm_hours, holidays_str, use_7h)
         norm = _norm_with_vacation(year, month, holidays, cells, use_7h, auto_7h)
     else:
         norm = norm_hours
-    return {"Факт. работы, дни": fact_days, "Командировка, дни": komand, "Разъездной характер работы": razezd, "Расчет по среднему": sz, "Медицинский осмотр": mo, "Болезнь": sick, "Отпуск": vac, "Отпуск без сохранения з/п": unpaid, "Прогул": progul, "Факт. время, часов": fact_hours, "Норма, часов": norm}
+        
+    return {
+        "Факт. работы, дни": fact_days,
+        "Командировка, дни": komand,
+        "Разъездной характер работы": razezd,
+        "Расчет по среднему": sz,
+        "Медицинский осмотр": mo,
+        "Болезнь": sick,
+        "Отпуск": vac,
+        "Отпуск без сохранения з/п": unpaid,
+        "Прогул": progul,
+        "Факт. время, часов": fact_hours,
+        "Норма, часов": norm
+    }
