@@ -47,6 +47,7 @@ class Document(Base):
     group = Column(String, nullable=False)
     year = Column(Integer, nullable=False)
     month = Column(Integer, nullable=False)
+    instance_number = Column(Integer, default=0)
     manual_mode = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     rows = relationship("DocumentRow", cascade="all, delete-orphan",
