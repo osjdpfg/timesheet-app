@@ -1,7 +1,7 @@
 import calendar
 from datetime import date
 from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment, PatternFill
+from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 
 from ..config import MONTHS_RU, WEEKDAYS_RU
@@ -71,27 +71,37 @@ def export_document_to_excel(doc_id, path):
     ws = wb.active
     total_cols = 2 + last_day + len(summary)
 
-    c = ws.cell(row=1, column=1, value=title)
-    ws.merge_cells(start_row=1, start_column=1,
-                   end_row=1, end_column=total_cols)
-    c.alignment = Alignment(horizontal="center")
-    c.font = Font(bold=True, size=12)
+    # Стили
+    thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), 
+                         top=Side(style='thin'), bottom=Side(style='thin'))
+    center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    weekend_fill = PatternFill(start_color=weekend_color, end_color=weekend_color, fill_type="solid")
 
+    # Заголовок
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=total_cols)
+    c = ws.cell(row=1, column=1, value=title)
+    c.alignment = Alignment(horizontal="center", vertical="center")
+    c.font = Font(bold=True, size=12)
+    ws.row_dimensions[1].height = 25
+
+    # Шапка
     ws.cell(row=3, column=1, value="ФИО")
     ws.merge_cells(start_row=3, start_column=1, end_row=4, end_column=1)
     ws.cell(row=3, column=2, value="Должность")
     ws.merge_cells(start_row=3, start_column=2, end_row=4, end_column=2)
 
-    weekend_fill = PatternFill(start_color=weekend_color,
-                               end_color=weekend_color, fill_type="solid")
-
     for d in range(1, last_day + 1):
         col = 2 + d
         dow = date(year, month, d).weekday()
-        c1 = ws.cell(row=3, column=col, value=WEEKDAYS_RU[dow][:2])
-        c1.alignment = Alignment(horizontal="center")
+        
+        c1 = ws.cell(row=3, column=col, value=WEEKDAYS_RU[dow])
         c2 = ws.cell(row=4, column=col, value=d)
-        c2.alignment = Alignment(horizontal="center")
+        
+        c1.alignment = center_align
+        c2.alignment = center_align
+        c1.border = thin_border
+        c2.border = thin_border
+        
         if dow >= 5:
             c1.fill = weekend_fill
             c2.fill = weekend_fill
@@ -100,29 +110,31 @@ def export_document_to_excel(doc_id, path):
         col = 2 + last_day + i + 1
         h = ws.cell(row=3, column=col, value=key)
         ws.merge_cells(start_row=3, start_column=col, end_row=4, end_column=col)
-        h.alignment = Alignment(horizontal="center", wrap_text=True)
+        h.alignment = center_align
+        h.border = thin_border
 
+    # Строки данных
     row_num = 5
     for row in data["rows"]:
-        ws.cell(row=row_num, column=1, value=row["employee_name"])
-        ws.cell(row=row_num, column=2, value=row["employee_position"])
+        c_name = ws.cell(row=row_num, column=1, value=row["employee_name"])
+        c_pos = ws.cell(row=row_num, column=2, value=row["employee_position"])
+        c_name.border = thin_border
+        c_pos.border = thin_border
 
         proxy = _proxy(row)
         if doc_type == "schedule":
-            res = calc_security_schedule(proxy, year, month,
-                                          norm_hours, holidays, use_7h)
+            res = calc_security_schedule(proxy, year, month, norm_hours, holidays, use_7h)
         elif group == "security":
-            res = calc_security_timesheet(proxy, year, month,
-                                           norm_hours, holidays, use_7h)
+            res = calc_security_timesheet(proxy, year, month, norm_hours, holidays, use_7h)
         else:
-            res = calc_transport_timesheet(proxy, year, month,
-                                            norm_hours, holidays, use_7h)
+            res = calc_transport_timesheet(proxy, year, month, norm_hours, holidays, use_7h)
 
         for d in range(1, last_day + 1):
             col = 2 + d
             code = row["cells"].get(d, "")
             cc = ws.cell(row=row_num, column=col, value=code)
-            cc.alignment = Alignment(horizontal="center")
+            cc.alignment = center_align
+            cc.border = thin_border
 
         for i, key in enumerate(summary):
             col = 2 + last_day + i + 1
@@ -131,10 +143,12 @@ def export_document_to_excel(doc_id, path):
             else:
                 val = res.get(key, "")
             cc = ws.cell(row=row_num, column=col, value=val)
-            cc.alignment = Alignment(horizontal="center")
+            cc.alignment = center_align
+            cc.border = thin_border
 
         row_num += 1
 
+    # Легенда
     row_num += 2
     legend = ["В - выходной", "Б - Болезнь", "О - отпуск",
               "С - справка", "П - прогул", "СЗ - средний заработок",
@@ -145,17 +159,19 @@ def export_document_to_excel(doc_id, path):
         ws.cell(row=row_num, column=col, value=item)
         col += 4
 
+    # Подпись
     sig_name, sig_pos = get_signatory(group)
     if sig_name:
         row_num += 3
         ws.cell(row=row_num, column=2, value=sig_pos or "Главный механик")
         ws.cell(row=row_num, column=12, value=sig_name)
 
-    ws.column_dimensions["A"].width = 22
-    ws.column_dimensions["B"].width = 18
+    # Ширина колонок
+    ws.column_dimensions["A"].width = 30
+    ws.column_dimensions["B"].width = 25
     for d in range(1, last_day + 1):
-        ws.column_dimensions[get_column_letter(2 + d)].width = 4
+        ws.column_dimensions[get_column_letter(2 + d)].width = 5
     for i in range(len(summary)):
-        ws.column_dimensions[get_column_letter(2 + last_day + i + 1)].width = 10
+        ws.column_dimensions[get_column_letter(2 + last_day + i + 1)].width = 12
 
     wb.save(path)
