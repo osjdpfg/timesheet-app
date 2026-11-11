@@ -6,7 +6,6 @@ from ..database.models import Document, DocumentRow, DocumentCell, ManualOverrid
 def create_document(doc_type, group, year, month, employees, source_document_id=None):
     s = get_session()
     try:
-        # Считаем, сколько уже есть документов за этот месяц
         max_inst = s.query(func.max(Document.instance_number)).filter_by(
             doc_type=doc_type, group=group, year=year, month=month
         ).scalar()
@@ -24,9 +23,10 @@ def create_document(doc_type, group, year, month, employees, source_document_id=
                     source_cells[(r.employee_name, r.employee_position)] = \
                         {c.day: c.code for c in r.cells}
 
-        for name, pos in employees:
+        # employees - список кортежей (name, pos, auto_7h)
+        for name, pos, auto_7h in employees:
             row = DocumentRow(document_id=doc.id, employee_name=name,
-                              employee_position=pos)
+                              employee_position=pos, auto_7h=auto_7h)
             s.add(row)
             s.flush()
             src = source_cells.get((name, pos), {})
@@ -83,6 +83,7 @@ def load_document(doc_id):
                 "id": r.id,
                 "employee_name": r.employee_name,
                 "employee_position": r.employee_position,
+                "auto_7h": r.auto_7h,
                 "cells": {c.day: c.code for c in r.cells},
                 "overrides": {o.column_key: o.value for o in r.overrides},
             } for r in d.rows],
@@ -116,8 +117,7 @@ def save_document(doc_id, rows_data, manual_mode):
                 if key in omap:
                     omap[key].value = val
                 else:
-                    s.add(ManualOverride(row_id=row.id, column_key=key,
-                                         value=val))
+                    s.add(ManualOverride(row_id=row.id, column_key=key, value=val))
         s.commit()
     finally:
         s.close()
