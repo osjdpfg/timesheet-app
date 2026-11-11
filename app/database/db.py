@@ -10,14 +10,27 @@ def init_db():
     from . import models  # noqa: F401
     models.Base.metadata.create_all(engine)
     
-    # Автоматически добавляем новую колонку в старую базу данных, если её нет
     with engine.connect() as conn:
         try:
+            # Миграция для documents
             res = conn.execute(text("PRAGMA table_info(documents)"))
             cols = [row[1] for row in res]
             if "instance_number" not in cols:
                 conn.execute(text("ALTER TABLE documents ADD COLUMN instance_number INTEGER DEFAULT 0"))
-                conn.commit()
+            
+            # Миграция для employees
+            res = conn.execute(text("PRAGMA table_info(employees)"))
+            cols = [row[1] for row in res]
+            if "auto_7h" not in cols:
+                conn.execute(text("ALTER TABLE employees ADD COLUMN auto_7h BOOLEAN DEFAULT 0"))
+            
+            # Миграция для document_rows
+            res = conn.execute(text("PRAGMA table_info(document_rows)"))
+            cols = [row[1] for row in res]
+            if "auto_7h" not in cols:
+                conn.execute(text("ALTER TABLE document_rows ADD COLUMN auto_7h BOOLEAN DEFAULT 0"))
+                
+            conn.commit()
         except Exception:
             pass
 
