@@ -59,7 +59,6 @@ class TransportTab(QWidget):
 
             doc_id = create_document("timesheet", "transport", year, month, employees)
             self.refresh()
-            
             w = DocumentWidget(doc_id, self)
             w.show()
             self.open_windows.append(w)
