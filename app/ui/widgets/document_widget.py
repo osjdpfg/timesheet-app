@@ -161,11 +161,11 @@ class DocumentWidget(QDialog):
 
         lay.addWidget(self.table)
 
-        # Блок расшифровки обозначений
+        # Контрастная легенда
         legend_text = "  |  ".join([f"<b>{k}</b> — {v}" for k, v in DESIGNATIONS.items()])
         legend_label = QLabel(legend_text)
         legend_label.setWordWrap(True)
-        legend_label.setStyleSheet("color: #555; font-size: 11px; padding-top: 10px;")
+        legend_label.setStyleSheet("font-size: 12px; padding-top: 10px;")
         lay.addWidget(legend_label)
 
         self._build_table()
@@ -194,38 +194,49 @@ class DocumentWidget(QDialog):
         self.table.setColumnCount(n_cols)
 
         self.table.setColumnWidth(0, 50)
+        
+        # Временные ширины для ФИО и Должности
         self.table.setColumnWidth(1, 180)
         self.table.setColumnWidth(2, 150)
+        
         for d in range(1, n_days + 1):
             self.table.setColumnWidth(2 + d, 30)
         for i in range(len(self.summary_keys)):
             self.table.setColumnWidth(3 + n_days + i, 80)
 
         self.table.setSpan(0, 0, 2, 1)
-        self.table.setItem(0, 0, QTableWidgetItem("Перем."))
+        top1 = QTableWidgetItem("Перем.")
+        top1.setFlags(top1.flags() & ~Qt.ItemIsEditable)
+        self.table.setItem(0, 0, top1)
+        
         self.table.setSpan(0, 1, 2, 1)
-        self.table.setItem(0, 1, QTableWidgetItem("ФИО"))
+        top2 = QTableWidgetItem("ФИО")
+        top2.setFlags(top2.flags() & ~Qt.ItemIsEditable)
+        self.table.setItem(0, 1, top2)
+        
         self.table.setSpan(0, 2, 2, 1)
-        self.table.setItem(0, 2, QTableWidgetItem("Должность"))
+        top3 = QTableWidgetItem("Должность")
+        top3.setFlags(top3.flags() & ~Qt.ItemIsEditable)
+        self.table.setItem(0, 2, top3)
 
-        # Автоматический подбор цвета для шапки выходных (светлее/темнее фона)
+        # Цвет шапки
         base_color = self.table.palette().color(QPalette.Base)
-        if base_color.lightness() < 128:
-            # Если тема темная — делаем светлее на пару тонов
-            weekend_header_color = base_color.lighter(135)
-        else:
-            # Если тема светлая — делаем чуть темнее, чтобы выделялось
-            weekend_header_color = base_color.darker(105)
+        weekend_header_color = base_color.lighter(135) if base_color.lightness() < 128 else base_color.darker(105)
 
         for d in range(1, n_days + 1):
             col = 2 + d
             dow = date(self.year, self.month, d).weekday()
+            
             wd = QTableWidgetItem(WEEKDAYS_RU[dow])
             wd.setTextAlignment(Qt.AlignCenter)
+            wd.setFlags(wd.flags() & ~Qt.ItemIsEditable) # Защита
             self.table.setItem(0, col, wd)
+            
             dt = QTableWidgetItem(str(d))
             dt.setTextAlignment(Qt.AlignCenter)
+            dt.setFlags(dt.flags() & ~Qt.ItemIsEditable) # Защита
             self.table.setItem(1, col, dt)
+            
             if dow >= 5:
                 wd.setBackground(QBrush(weekend_header_color))
                 dt.setBackground(QBrush(weekend_header_color))
@@ -234,6 +245,7 @@ class DocumentWidget(QDialog):
             col = 3 + n_days + i
             it = QTableWidgetItem(key)
             it.setTextAlignment(Qt.AlignCenter)
+            it.setFlags(it.flags() & ~Qt.ItemIsEditable) # Защита
             self.table.setItem(0, col, it)
             self.table.setSpan(0, col, 2, 1)
 
@@ -260,7 +272,6 @@ class DocumentWidget(QDialog):
             move_layout.addWidget(btn_down)
             self.table.setCellWidget(gr, 0, move_widget)
 
-            # ФИО и Должность - запрет на редактирование
             name_item = QTableWidgetItem(row["employee_name"])
             name_item.setFlags(name_item.flags() & ~Qt.ItemIsEditable)
             self.table.setItem(gr, 1, name_item)
@@ -288,6 +299,13 @@ class DocumentWidget(QDialog):
                 self.table.setItem(gr, col, it)
 
         self.table.resizeRowsToContents()
+        
+        # Автоподбор ширины для ФИО и Должности (и итоговых граф)
+        self.table.resizeColumnToContents(1)
+        self.table.resizeColumnToContents(2)
+        for i in range(len(self.summary_keys)):
+            self.table.resizeColumnToContents(3 + n_days + i)
+
         self.table.blockSignals(False)
 
     def _save_undo(self):
@@ -389,6 +407,7 @@ class DocumentWidget(QDialog):
         p = _RowProxy()
         p.employee_name = row["employee_name"]
         p.employee_position = row["employee_position"]
+        p.auto_7h = row.get("auto_7h", False) # Передаем флаг
         p.cells = [_CellProxy(d, c) for d, c in row["cells"].items()]
         return p
 
@@ -415,7 +434,19 @@ class DocumentWidget(QDialog):
 
         if 3 <= c <= 2 + n_days:
             code = item.text()
-            self.data["rows"][r_idx]["cells"][c - 2] = code
+            day = c - 2
+            
+            # Автозамена 8 на 7 (если включено для сотрудника и это предпраздничный день)
+            if code == "8" and self.data["rows"][r_idx].get("auto_7h", False):
+                _, holidays_str = get_year_month(self.year, self.month)
+                holidays = set(int(x.strip()) for x in holidays_str.split(',') if x.strip().isdigit())
+                if (day + 1) in holidays:
+                    code = "7"
+                    self.table.blockSignals(True)
+                    item.setText("7")
+                    self.table.blockSignals(False)
+
+            self.data["rows"][r_idx]["cells"][day] = code
             
             self.table.blockSignals(True)
             self._apply_item_color(item, code)
@@ -443,19 +474,15 @@ class DocumentWidget(QDialog):
         rows = rng.rowCount()
         cols = rng.columnCount()
         
-        # Если выделено 4 и более столбца
         if cols >= 4:
             self._save_undo()
             self.table.blockSignals(True)
             
-            # Идем по каждой строке в выделении
             for r in range(rng.topRow(), rng.bottomRow() + 1):
-                # Берем паттерн из первых 4 ячеек ЭТОЙ строки
                 pattern = []
                 for c in range(rng.leftColumn(), rng.leftColumn() + 4):
                     pattern.append(self.table.item(r, c).text())
                 
-                # Заполняем от 4-й ячейки до конца месяца
                 for c in range(rng.leftColumn() + 4, 3 + self.last_day):
                     val = pattern[(c - rng.leftColumn()) % 4]
                     item = self.table.item(r, c)
@@ -465,7 +492,6 @@ class DocumentWidget(QDialog):
             
             self.table.blockSignals(False)
             
-            # Пересчитываем итоги для всех затронутых строк
             rows_to_update = set(range(rng.topRow(), rng.bottomRow() + 1))
             for r in rows_to_update:
                 if not self.manual_mode:
@@ -523,10 +549,19 @@ class DocumentWidget(QDialog):
             if r < 0 or c < 3 or c > 2 + n_days:
                 continue
             day = c - 2
-            self.data["rows"][r]["cells"][day] = code
+            
+            # Автозамена
+            final_code = code
+            if code == "8" and self.data["rows"][r].get("auto_7h", False):
+                _, holidays_str = get_year_month(self.year, self.month)
+                holidays = set(int(x.strip()) for x in holidays_str.split(',') if x.strip().isdigit())
+                if (day + 1) in holidays:
+                    final_code = "7"
+
+            self.data["rows"][r]["cells"][day] = final_code
             item = self.table.item(idx.row(), idx.column())
-            item.setText(code)
-            self._apply_item_color(item, code)
+            item.setText(final_code)
+            self._apply_item_color(item, final_code)
         self.table.blockSignals(False)
         
         for r_idx in range(len(self.data["rows"])):
