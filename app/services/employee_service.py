@@ -8,17 +8,17 @@ def list_employees(group=None):
         q = s.query(Employee)
         if group:
             q = q.filter_by(group=group)
-        return [(e.id, e.full_name, e.position, e.group, e.is_signatory)
+        return [(e.id, e.full_name, e.position, e.group, e.is_signatory, e.auto_7h)
                 for e in q.order_by(Employee.full_name).all()]
     finally:
         s.close()
 
 
-def add_employee(name, position, group, is_signatory=False):
+def add_employee(name, position, group, is_signatory=False, auto_7h=False):
     s = get_session()
     try:
         e = Employee(full_name=name, position=position, group=group,
-                     is_signatory=is_signatory)
+                     is_signatory=is_signatory, auto_7h=auto_7h)
         s.add(e)
         s.commit()
         return e.id
@@ -26,7 +26,7 @@ def add_employee(name, position, group, is_signatory=False):
         s.close()
 
 
-def update_employee(eid, name, position, group, is_signatory):
+def update_employee(eid, name, position, group, is_signatory, auto_7h):
     s = get_session()
     try:
         e = s.get(Employee, eid)
@@ -35,6 +35,7 @@ def update_employee(eid, name, position, group, is_signatory):
             e.position = position
             e.group = group
             e.is_signatory = is_signatory
+            e.auto_7h = auto_7h
             s.commit()
     finally:
         s.close()
