@@ -11,7 +11,8 @@ def create_document(doc_type, group, year, month, employees, source_document_id=
         ).scalar()
         new_inst = 0 if max_inst is None else max_inst + 1
 
-        doc = Document(doc_type=doc_type, group=group, year=year, month=month, instance_number=new_inst)
+        doc = Document(doc_type=doc_type, group=group, year=year, month=month, 
+                       instance_number=new_inst, linked_schedule_id=source_document_id)
         s.add(doc)
         s.flush()
 
@@ -23,7 +24,6 @@ def create_document(doc_type, group, year, month, employees, source_document_id=
                     source_cells[(r.employee_name, r.employee_position)] = \
                         {c.day: c.code for c in r.cells}
 
-        # employees - список кортежей (name, pos, auto_7h)
         for name, pos, auto_7h in employees:
             row = DocumentRow(document_id=doc.id, employee_name=name,
                               employee_position=pos, auto_7h=auto_7h)
@@ -35,6 +35,75 @@ def create_document(doc_type, group, year, month, employees, source_document_id=
                                    code=src.get(day, "")))
         s.commit()
         return doc.id
+    finally:
+        s.close()
+
+
+def get_linked_timesheets(doc_id):
+    s = get_session()
+    try:
+        return s.query(Document).filter_by(linked_schedule_id=doc_id).all()
+    finally:
+        s.close()
+
+
+def update_document_structure(doc_id, new_year, new_month, employees):
+    s = get_session()
+    try:
+        doc = s.get(Document, doc_id)
+        if not doc: return False
+        
+        doc.year = new_year
+        doc.month = new_month
+        
+        # Синхронизация строк самого документа
+        existing_rows = { (r.employee_name, r.employee_position): r for r in doc.rows }
+        new_rows = []
+        
+        for name, pos, auto_7h in employees:
+            if (name, pos) in existing_rows:
+                row = existing_rows.pop((name, pos))
+                row.auto_7h = auto_7h
+                new_rows.append(row)
+            else:
+                row = DocumentRow(document_id=doc.id, employee_name=name, employee_position=pos, auto_7h=auto_7h)
+                s.add(row)
+                s.flush()
+                for day in range(1, 32):
+                    s.add(DocumentCell(row_id=row.id, day=day, code=""))
+                new_rows.append(row)
+        
+        for row in existing_rows.values():
+            s.delete(row)
+            
+        # Если это график, обновляем привязанный табель
+        if doc.doc_type == "schedule":
+            timesheets = s.query(Document).filter_by(linked_schedule_id=doc.id).all()
+            for ts in timesheets:
+                ts.year = new_year
+                ts.month = new_month
+                
+                ts_existing = { (r.employee_name, r.employee_position): r for r in ts.rows }
+                ts_new_rows = []
+                
+                for row in new_rows:
+                    if (row.employee_name, row.employee_position) in ts_existing:
+                        ts_row = ts_existing.pop((row.employee_name, row.employee_position))
+                        ts_row.auto_7h = row.auto_7h
+                        ts_new_rows.append(ts_row)
+                    else:
+                        ts_row = DocumentRow(document_id=ts.id, employee_name=row.employee_name, employee_position=row.employee_position, auto_7h=row.auto_7h)
+                        s.add(ts_row)
+                        s.flush()
+                        for day in range(1, 32):
+                            s.add(DocumentCell(row_id=ts_row.id, day=day, code=""))
+                        ts_new_rows.append(ts_row)
+                
+                for ts_row in ts_existing.values():
+                    s.delete(ts_row)
+        
+        s.commit()
+        return True
     finally:
         s.close()
 
