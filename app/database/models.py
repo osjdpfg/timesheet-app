@@ -38,6 +38,7 @@ class Employee(Base):
     position = Column(String, default="")
     group = Column(String, default="security")
     is_signatory = Column(Boolean, default=False)
+    auto_7h = Column(Boolean, default=False) # <--- НОВОЕ
 
 
 class Document(Base):
@@ -60,6 +61,7 @@ class DocumentRow(Base):
     document_id = Column(Integer, ForeignKey("documents.id"), nullable=False)
     employee_name = Column(String, default="")
     employee_position = Column(String, default="")
+    auto_7h = Column(Boolean, default=False) # <--- НОВОЕ
     document = relationship("Document", back_populates="rows")
     cells = relationship("DocumentCell", cascade="all, delete-orphan",
                          back_populates="row")
