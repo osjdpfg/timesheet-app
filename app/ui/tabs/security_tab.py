@@ -1,7 +1,9 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                                 QListWidget, QListWidgetItem, QMessageBox,
                                 QDialog, QComboBox, QLabel, QTableWidget,
-                                QTableWidgetItem, QCheckBox, QDialogButtonBox)
+                                QTableWidgetItem, QCheckBox, QDialogButtonBox,
+                                QGridLayout)
+from PySide6.QtCore import Qt
 
 from ...config import MONTHS_RU
 from ...services.employee_service import list_employees
@@ -20,28 +22,34 @@ class NewDocumentDialog(QDialog):
         self.doc_type = doc_type
 
         lay = QVBoxLayout(self)
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Месяц:"))
+        
+        # Используем сетку для идеального выравнивания
+        grid = QGridLayout()
+        
+        grid.addWidget(QLabel("Месяц:"), 0, 0)
         self.month_combo = QComboBox()
         for i, m in enumerate(MONTHS_RU):
             self.month_combo.addItem(m, i + 1)
-        row.addWidget(self.month_combo)
-        row.addWidget(QLabel("Год:"))
+        grid.addWidget(self.month_combo, 0, 1)
+
+        grid.addWidget(QLabel("Год:"), 0, 2)
         self.year_combo = QComboBox()
         years = list_years()
         if not years:
-            QMessageBox.warning(self, "Нет годов", "Сначала добавьте год в разделе «Общие настройки»")
+            QMessageBox.warning(self, "Нет годов",
+                                "Сначала добавьте год в разделе «Общие настройки»")
             self.reject()
             return
         for y in years:
             self.year_combo.addItem(str(y), y)
-        row.addWidget(self.year_combo)
-        lay.addLayout(row)
+        grid.addWidget(self.year_combo, 0, 3)
 
         self.schedule_combo = None
         if doc_type == "timesheet" and group == "security":
-            r2 = QHBoxLayout()
-            r2.addWidget(QLabel("На основе графика:"))
+            lbl_sched = QLabel("На основе графика:")
+            lbl_sched.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            grid.addWidget(lbl_sched, 1, 0)
+            
             self.schedule_combo = QComboBox()
             self.schedule_combo.addItem("(без графика)", None)
             docs = list_documents("schedule", "security")
@@ -50,8 +58,11 @@ class NewDocumentDialog(QDialog):
                 did, dt, grp, yr, mn, inst = d
                 suffix = f" ({inst})" if inst > 0 else ""
                 self.schedule_combo.addItem(f"{MONTHS_RU[mn - 1]} {yr}{suffix}", did)
-            r2.addWidget(self.schedule_combo)
-            lay.addLayout(r2)
+            
+            # Растягиваем комбобокс на 3 колонки (под месяц, год и пустое место)
+            grid.addWidget(self.schedule_combo, 1, 1, 1, 3)
+
+        lay.addLayout(grid)
 
         lay.addWidget(QLabel("Сотрудники:"))
         self.table = QTableWidget(0, 3)
@@ -81,7 +92,6 @@ class NewDocumentDialog(QDialog):
             cb = self.table.cellWidget(i, 0)
             if cb and cb.isChecked():
                 e = self.employees_data[i]
-                # Передаем (name, pos, auto_7h)
                 selected.append((e[1], e[2], e[5]))
         src = None
         if self.schedule_combo is not None:
