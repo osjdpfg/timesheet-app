@@ -4,7 +4,7 @@ from datetime import date
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                                 QTableWidget, QTableWidgetItem, QLabel,
                                 QComboBox, QMessageBox, QFileDialog,
-                                QAbstractItemView)
+                                QAbstractItemView, QWidget)
 from PySide6.QtGui import QColor, QBrush, QFont, QKeyEvent
 from PySide6.QtCore import Qt, QTimer
 
@@ -43,6 +43,10 @@ class DocumentWidget(QDialog):
         self.setAttribute(Qt.WA_DeleteOnClose)
         self.is_modified = False
         self._is_updating = False
+        
+        # Переменные для растягивания (Fill Handle)
+        self._drag_start = None
+        self._drag_val = ""
 
         self.doc_id = doc_id
         data = load_document(doc_id)
@@ -58,15 +62,13 @@ class DocumentWidget(QDialog):
         self.manual_mode = data["manual_mode"]
         self.last_day = calendar.monthrange(self.year, self.month)[1]
         
-        # Получаем номер копии (1), (2) и т.д.
         inst_num = data.get("instance_number", 0)
         suffix = f" ({inst_num})" if inst_num > 0 else ""
 
         if self.doc_type == "schedule":
             title = (f"График группы по охранному обеспечению "
                      f"на {MONTHS_RU[self.month - 1]} {self.year} г.{suffix}")
-            self.summary_keys = ["Факт. работы", "Отпуск", "Всего",
-                                 "Норма", "Ознакомлен"]
+            self.summary_keys = ["Факт. работы", "Отпуск", "Всего", "Норма", "Ознакомлен"]
         elif self.group == "security":
             title = (f"Табель группы по охранному обеспечению "
                      f"на {MONTHS_RU[self.month - 1]} {self.year} г.{suffix}")
@@ -86,13 +88,12 @@ class DocumentWidget(QDialog):
                 "Факт. время, часов", "Норма, часов"]
 
         self.setWindowTitle(title)
-        self.resize(1550, 750)
+        self.resize(1600, 750)
 
         lay = QVBoxLayout(self)
 
         self.banner = QLabel("")
-        self.banner.setStyleSheet(
-            "background:#FFC107; color:black; padding:6px; font-weight:bold;")
+        self.banner.setStyleSheet("background:#FFC107; color:black; padding:6px; font-weight:bold;")
         self.banner.setVisible(False)
         lay.addWidget(self.banner)
 
@@ -113,8 +114,7 @@ class DocumentWidget(QDialog):
         self.code_combo = QComboBox()
         all_codes = set()
         for r in self.data["rows"]:
-            for c in allowed_codes(self.group, self.doc_type,
-                                    r["employee_position"]):
+            for c in allowed_codes(self.group, self.doc_type, r["employee_position"]):
                 if c:
                     all_codes.add(c)
         self.code_combo.addItems([""] + sorted(all_codes))
@@ -127,15 +127,6 @@ class DocumentWidget(QDialog):
         btn_autofill = QPushButton("Автозаполнить (4 ячейки)")
         btn_autofill.clicked.connect(self.auto_fill_pattern)
         tools.addWidget(btn_autofill)
-
-        # Кнопки перемещения строк
-        tools.addSpacing(20)
-        self.btn_up = QPushButton("▲ Вверх")
-        self.btn_up.clicked.connect(self.move_row_up)
-        tools.addWidget(self.btn_up)
-        self.btn_down = QPushButton("▼ Вниз")
-        self.btn_down.clicked.connect(self.move_row_down)
-        tools.addWidget(self.btn_down)
 
         tools.addStretch()
 
@@ -150,12 +141,26 @@ class DocumentWidget(QDialog):
         lay.addLayout(tools)
 
         self.table = QTableWidget()
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows) # Выделение строк целиком
-        self.table.setSelectionMode(QAbstractItemView.SingleSelection) # Только одна строка
-        self.table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
-        self.table.setDragDropMode(QAbstractItemView.NoDragDrop) # Отключаем Drag&Drop
+        self.table.verticalHeader().setVisible(False) # Скрываем стандартные цифры 1,2,3...
+        
+        # Настройка выделения (как в Excel)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectItems)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.table.setDragDropMode(QAbstractItemView.NoDragDrop) # Отключаем перетаскивание ячеек
+        self.table.setStyleSheet("""
+            QTableWidget::item:selected {
+                border: 2px solid #1E88E5;
+                background-color: rgba(30, 136, 229, 0.2);
+                color: black;
+            }
+        """)
+        
         self.table.itemChanged.connect(self.on_item_changed)
-        self.table.itemSelectionChanged.connect(self.update_move_buttons)
+        
+        # Подключаем события мыши для растягивания (Fill Handle)
+        self.table.mousePressEvent = self._table_mouse_press
+        self.table.mouseMoveEvent = self._table_mouse_move
+        self.table.mouseReleaseEvent = self._table_mouse_release
 
         lay.addWidget(self.table)
         self._build_table()
@@ -165,28 +170,34 @@ class DocumentWidget(QDialog):
         self._is_updating = True
         n_rows = len(self.data["rows"])
         n_days = self.last_day
-        n_cols = 2 + n_days + len(self.summary_keys)
+        # Колонки: 0 - Стрелки, 1 - ФИО, 2 - Должность, 3... - Дни, Далее - Итоги
+        n_cols = 3 + n_days + len(self.summary_keys)
+        
         self.table.clear()
         self.table.setRowCount(n_rows + 2)
         self.table.setColumnCount(n_cols)
 
-        self.table.setColumnWidth(0, 180)
-        self.table.setColumnWidth(1, 150)
+        self.table.setColumnWidth(0, 50)   # Стрелки
+        self.table.setColumnWidth(1, 180)  # ФИО
+        self.table.setColumnWidth(2, 150)  # Должность
         for d in range(1, n_days + 1):
-            self.table.setColumnWidth(1 + d, 30)
+            self.table.setColumnWidth(2 + d, 30)
         for i in range(len(self.summary_keys)):
-            self.table.setColumnWidth(2 + n_days + i, 80)
+            self.table.setColumnWidth(3 + n_days + i, 80)
 
-        self.table.setItem(0, 0, QTableWidgetItem("ФИО"))
-        self.table.setItem(0, 1, QTableWidgetItem("Должность"))
+        # Шапка
         self.table.setSpan(0, 0, 2, 1)
+        self.table.setItem(0, 0, QTableWidgetItem("Перем."))
         self.table.setSpan(0, 1, 2, 1)
+        self.table.setItem(0, 1, QTableWidgetItem("ФИО"))
+        self.table.setSpan(0, 2, 2, 1)
+        self.table.setItem(0, 2, QTableWidgetItem("Должность"))
 
         weekend_color = QColor(get_weekend_color())
         code_colors = get_all_colors()
 
         for d in range(1, n_days + 1):
-            col = 1 + d
+            col = 2 + d
             dow = date(self.year, self.month, d).weekday()
             wd = QTableWidgetItem(WEEKDAYS_RU[dow])
             wd.setTextAlignment(Qt.AlignCenter)
@@ -199,16 +210,42 @@ class DocumentWidget(QDialog):
                 dt.setBackground(QBrush(weekend_color))
 
         for i, key in enumerate(self.summary_keys):
-            col = 2 + n_days + i
+            col = 3 + n_days + i
             it = QTableWidgetItem(key)
             it.setTextAlignment(Qt.AlignCenter)
             self.table.setItem(0, col, it)
             self.table.setSpan(0, col, 2, 1)
 
+        # Строки данных
         for r_idx, row in enumerate(self.data["rows"]):
             gr = r_idx + 2
-            self.table.setItem(gr, 0, QTableWidgetItem(row["employee_name"]))
-            self.table.setItem(gr, 1, QTableWidgetItem(row["employee_position"]))
+            
+            # 1. Кнопки вверх/вниз (Столбец 0)
+            move_widget = QWidget()
+            move_layout = QHBoxLayout(move_widget)
+            move_layout.setContentsMargins(0, 0, 0, 0)
+            move_layout.setSpacing(2)
+            
+            btn_up = QPushButton("▲")
+            btn_down = QPushButton("▼")
+            btn_up.setFixedSize(22, 22)
+            btn_down.setFixedSize(22, 22)
+            btn_up.setStyleSheet("font-weight: bold; background-color: #f0f0f0;")
+            btn_down.setStyleSheet("font-weight: bold; background-color: #f0f0f0;")
+            
+            # Привязываем кнопки к конкретной строке
+            btn_up.clicked.connect(lambda checked, r=r_idx: self.move_row(r, -1))
+            btn_down.clicked.connect(lambda checked, r=r_idx: self.move_row(r, 1))
+            
+            move_layout.addWidget(btn_up)
+            move_layout.addWidget(btn_down)
+            self.table.setCellWidget(gr, 0, move_widget)
+
+            # 2. ФИО и Должность
+            self.table.setItem(gr, 1, QTableWidgetItem(row["employee_name"]))
+            self.table.setItem(gr, 2, QTableWidgetItem(row["employee_position"]))
+            
+            # 3. Дни
             for d in range(1, n_days + 1):
                 code = row["cells"].get(d, "")
                 it = QTableWidgetItem(code)
@@ -217,11 +254,12 @@ class DocumentWidget(QDialog):
                 if code in code_colors:
                     it.setBackground(QBrush(QColor(code_colors[code])))
 
-                self.table.setItem(gr, 1 + d, it)
+                self.table.setItem(gr, 2 + d, it)
             
+            # 4. Итоги
             res = self._calculate(row)
             for i, key in enumerate(self.summary_keys):
-                col = 2 + n_days + i
+                col = 3 + n_days + i
                 if self.manual_mode and key in row["overrides"]:
                     val = row["overrides"][key]
                 else:
@@ -232,30 +270,66 @@ class DocumentWidget(QDialog):
 
         self.table.resizeRowsToContents()
         self._is_updating = False
-        self.update_move_buttons()
 
-    def update_move_buttons(self):
-        row = self.table.currentRow()
-        self.btn_up.setEnabled(row > 2)
-        self.btn_down.setEnabled(row > 1 and row < self.table.rowCount() - 1)
+    def move_row(self, r_idx, direction):
+        new_idx = r_idx + direction
+        if 0 <= new_idx < len(self.data["rows"]):
+            # Меняем местами в базе
+            self.data["rows"][r_idx], self.data["rows"][new_idx] = self.data["rows"][new_idx], self.data["rows"][r_idx]
+            self._build_table()
+            self.table.selectRow(new_idx + 2)
+            self.is_modified = True
 
-    def move_row_up(self):
-        row = self.table.currentRow()
-        if row <= 2: return
-        idx = row - 2
-        self.data["rows"][idx], self.data["rows"][idx-1] = self.data["rows"][idx-1], self.data["rows"][idx]
-        self._build_table()
-        self.table.selectRow(row - 1)
-        self.is_modified = True
+    # --- Логика растягивания (Fill Handle) ---
+    def _table_mouse_press(self, event):
+        if event.button() == Qt.LeftButton:
+            idx = self.table.indexAt(event.pos())
+            if idx.isValid():
+                rect = self.table.visualRect(idx)
+                # Если кликнули в правый нижний уголок ячейки (квадратик для растягивания)
+                if event.pos().x() > rect.right() - 10 and event.pos().y() > rect.bottom() - 10:
+                    self._drag_start = (idx.row(), idx.column())
+                    self._drag_val = self.table.item(idx.row(), idx.column()).text()
+                    return
+        self._drag_start = None
+        QTableWidget.mousePressEvent(self.table, event)
 
-    def move_row_down(self):
-        row = self.table.currentRow()
-        if row < 2 or row >= self.table.rowCount() - 1: return
-        idx = row - 2
-        self.data["rows"][idx], self.data["rows"][idx+1] = self.data["rows"][idx+1], self.data["rows"][idx]
-        self._build_table()
-        self.table.selectRow(row + 1)
-        self.is_modified = True
+    def _table_mouse_move(self, event):
+        if getattr(self, '_drag_start', None) and event.buttons() & Qt.LeftButton:
+            idx = self.table.indexAt(event.pos())
+            if idx.isValid():
+                r, c = idx.row(), idx.column()
+                r0, c0 = self._drag_start
+                
+                # Разрешаем растягивать только влево/вправо (по горизонтали), как просили
+                if r == r0 and c != c0:
+                    self._is_updating = True
+                    min_c, max_c = min(c0, c), max(c0, c)
+                    
+                    for j in range(min_c, max_c + 1):
+                        if j > 2 and j <= 2 + self.last_day: # Только для дней
+                            self.table.item(r, j).setText(self._drag_val)
+                    
+                    self._is_updating = False
+                    self.is_modified = True
+                    
+                    # Обновляем расчеты в строке
+                    if r > 1 and not self.manual_mode:
+                        row_data = self.data["rows"][r-2]
+                        for j in range(min_c, max_c + 1):
+                            if j > 2 and j <= 2 + self.last_day:
+                                row_data["cells"][j-2] = self._drag_val
+                        res = self._calculate(row_data)
+                        for k, key in enumerate(self.summary_keys):
+                            col = 3 + self.last_day + k
+                            self.table.item(r, col).setText(str(res.get(key, "")))
+        else:
+            QTableWidget.mouseMoveEvent(self.table, event)
+
+    def _table_mouse_release(self, event):
+        self._drag_start = None
+        QTableWidget.mouseReleaseEvent(self.table, event)
+    # -----------------------------------------
 
     def _row_proxy(self, row):
         p = _RowProxy()
@@ -286,9 +360,10 @@ class DocumentWidget(QDialog):
         r_idx = r - 2
         n_days = self.last_day
 
-        if 2 <= c <= 1 + n_days:
+        # Если изменилась ячейка с днем
+        if 3 <= c <= 2 + n_days:
             code = item.text()
-            self.data["rows"][r_idx]["cells"][c - 1] = code
+            self.data["rows"][r_idx]["cells"][c - 2] = code
             
             code_colors = get_all_colors()
             if code in code_colors:
@@ -300,12 +375,13 @@ class DocumentWidget(QDialog):
                 res = self._calculate(self.data["rows"][r_idx])
                 self._is_updating = True
                 for i, key in enumerate(self.summary_keys):
-                    col = 2 + n_days + i
+                    col = 3 + n_days + i
                     self.table.item(r, col).setText(str(res.get(key, "")))
                 self._is_updating = False
 
-        elif c > 1 + n_days and self.manual_mode:
-            key = self.summary_keys[c - (2 + n_days)]
+        # Если изменились итоговые графы (только в ручном режиме)
+        elif c > 2 + n_days and self.manual_mode:
+            key = self.summary_keys[c - (3 + n_days)]
             self.data["rows"][r_idx]["overrides"][key] = item.text()
 
     def auto_fill_pattern(self):
@@ -325,7 +401,7 @@ class DocumentWidget(QDialog):
                 pattern.append(self.table.item(row, c).text())
             
             n_days = self.last_day
-            for c in range(rng.rightColumn() + 1, 2 + n_days):
+            for c in range(rng.rightColumn() + 1, 3 + n_days):
                 val = pattern[(c - rng.leftColumn()) % 4]
                 self.table.item(row, c).setText(val)
                 
@@ -382,9 +458,9 @@ class DocumentWidget(QDialog):
         for idx in self.table.selectedIndexes():
             r = idx.row() - 2
             c = idx.column()
-            if r < 0 or c < 2 or c > 1 + n_days:
+            if r < 0 or c < 3 or c > 2 + n_days:
                 continue
-            day = c - 1
+            day = c - 2
             self.data["rows"][r]["cells"][day] = code
             self.table.item(idx.row(), idx.column()).setText(code)
         self._is_updating = False
@@ -393,7 +469,7 @@ class DocumentWidget(QDialog):
             if not self.manual_mode:
                 res = self._calculate(self.data["rows"][r_idx])
                 for i, key in enumerate(self.summary_keys):
-                    col = 2 + n_days + i
+                    col = 3 + n_days + i
                     self.table.item(r_idx + 2, col).setText(str(res.get(key, "")))
         self.is_modified = True
 
@@ -402,11 +478,11 @@ class DocumentWidget(QDialog):
         for r_idx, row in enumerate(self.data["rows"]):
             gr = r_idx + 2
             for d in range(1, n_days + 1):
-                it = self.table.item(gr, 1 + d)
+                it = self.table.item(gr, 2 + d)
                 row["cells"][d] = it.text() if it else ""
             if self.manual_mode:
                 for i, key in enumerate(self.summary_keys):
-                    it = self.table.item(gr, 2 + n_days + i)
+                    it = self.table.item(gr, 3 + n_days + i)
                     row["overrides"][key] = it.text() if it else ""
         save_document(self.doc_id, self.data["rows"], self.manual_mode)
         self.is_modified = False
