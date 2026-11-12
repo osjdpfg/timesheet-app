@@ -41,7 +41,6 @@ class SettingsTab(QWidget):
         top.addStretch()
         lay.addLayout(top)
 
-        # Таблица месяцев
         self.table = QTableWidget(12, 3)
         self.table.setHorizontalHeaderLabels(
             ["Месяц", "Норма часов", "Праздничные дни (через запятую)"])
@@ -53,7 +52,6 @@ class SettingsTab(QWidget):
         self.table.itemChanged.connect(self.on_cell_changed)
         lay.addWidget(self.table)
 
-        # Группа цветов
         color_group = QGroupBox("Цвета обозначений")
         color_layout = QGridLayout()
         self.color_buttons = {}
@@ -71,12 +69,15 @@ class SettingsTab(QWidget):
         color_group.setLayout(color_layout)
         lay.addWidget(color_group)
 
+        # Создаем один экземпляр QColorDialog, чтобы палитра кастомных цветов сохранялась
+        self.color_dialog = QColorDialog(self)
+        self.color_dialog.setOption(QColorDialog.DontUseNativeDialog, True)
+
         self.load_hour_mode()
         self.refresh_years()
         self.update_color_buttons()
 
     def _get_contrast_text_color(self, hex_color):
-        """Возвращает черный или белый цвет в зависимости от яркости фона."""
         hex_color = hex_color.lstrip('#')
         if len(hex_color) == 3:
             hex_color = ''.join([c*2 for c in hex_color])
@@ -104,9 +105,11 @@ class SettingsTab(QWidget):
 
     def pick_code_color(self, code):
         colors = get_all_colors()
-        current = QColor(colors.get(code, "#FFFFFF"))
-        c = QColorDialog.getColor(current, self, f"Цвет для '{code}'")
-        if c.isValid():
+        self.color_dialog.setCurrentColor(QColor(colors.get(code, "#FFFFFF")))
+        
+        # Открываем диалог. Теперь кастомные цвета будут сохраняться между открытиями
+        if self.color_dialog.exec():
+            c = self.color_dialog.currentColor()
             set_code_color(code, c.name())
             self.update_color_buttons()
 
