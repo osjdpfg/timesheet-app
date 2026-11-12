@@ -20,12 +20,11 @@ def _work_days_in_month(year, month):
     return [d for d in range(1, last + 1) if date(year, month, d).weekday() < 5]
 
 def _is_preholiday(day, holidays, year, month):
-    # Предпраздничный день, если следующий день — праздник, И сам день выпадает на Пн-Пт
     if (day + 1) not in holidays:
         return False
     return date(year, month, day).weekday() < 5
 
-def _calc_dynamic_norm(year, month, holidays, cells, use_7h, auto_7h, absence_codes=("О", "А")):
+def _norm_with_vacation(year, month, holidays, cells, use_7h, auto_7h, absence_codes=("О", "А")):
     norm = 0
     for d in _work_days_in_month(year, month):
         if cells.get(d, "") in absence_codes:
@@ -49,9 +48,9 @@ def calc_security_schedule(row, year, month, norm_hours, holidays_str, use_7h):
     vac = _count(cells, {"О"})
     unpaid = _count(cells, {"А"})
     
-    dynamic_norm = _calc_dynamic_norm(year, month, holidays, cells, use_7h, auto_7h)
-    if norm_hours == 0 or (use_7h or auto_7h) or vac > 0 or unpaid > 0:
-        norm = dynamic_norm
+    # Норма из настроек, либо пересчет если есть отпуск
+    if vac > 0 or unpaid > 0:
+        norm = _norm_with_vacation(year, month, holidays, cells, use_7h, auto_7h)
     else:
         norm = norm_hours
         
@@ -85,9 +84,9 @@ def calc_security_timesheet(row, year, month, norm_hours, holidays_str, use_7h):
     progul = _count(cells, {"П"})
     unpaid = _count(cells, {"А"})
     
-    dynamic_norm = _calc_dynamic_norm(year, month, holidays, cells, use_7h, auto_7h)
-    if norm_hours == 0 or (use_7h or auto_7h) or vac > 0 or unpaid > 0:
-        norm = dynamic_norm
+    # Норма из настроек, либо пересчет если есть отпуск
+    if vac > 0 or unpaid > 0:
+        norm = _norm_with_vacation(year, month, holidays, cells, use_7h, auto_7h)
     else:
         norm = norm_hours
         
@@ -130,9 +129,9 @@ def calc_transport_timesheet(row, year, month, norm_hours, holidays_str, use_7h)
         elif c == "7":
             fact_hours += 7 if (use_7h or auto_7h) else 8
             
-    dynamic_norm = _calc_dynamic_norm(year, month, holidays, cells, use_7h, auto_7h)
-    if norm_hours == 0 or (use_7h or auto_7h) or vac > 0 or unpaid > 0:
-        norm = dynamic_norm
+    # Норма из настроек, либо пересчет если есть отпуск
+    if vac > 0 or unpaid > 0:
+        norm = _norm_with_vacation(year, month, holidays, cells, use_7h, auto_7h)
     else:
         norm = norm_hours
         
