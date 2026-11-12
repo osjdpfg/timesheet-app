@@ -276,9 +276,13 @@ class DocumentWidget(QDialog):
             new_year, new_month, employees = d.get_result()
             if update_document_structure(self.doc_id, new_year, new_month, employees):
                 self.data = load_document(self.doc_id)
+                # Принудительно обновляем год и месяц, чтобы заголовок сменился сразу
+                self.data["year"] = new_year
+                self.data["month"] = new_month
                 self.year = new_year
                 self.month = new_month
                 self.last_day = calendar.monthrange(self.year, self.month)[1]
+                
                 self._update_title()
                 self._build_table()
                 self.is_modified = True
@@ -504,20 +508,30 @@ class DocumentWidget(QDialog):
                     self.table.blockSignals(True)
                     min_c, max_c = min(c0, c), max(c0, c)
                     
+                    _, holidays_str = get_year_month(self.year, self.month)
+                    holidays = set(int(x.strip()) for x in holidays_str.split(',') if x.strip().isdigit())
+                    auto_7h = self.data["rows"][r-2].get("auto_7h", False) if r >= 2 else False
+                    
                     for j in range(min_c, max_c + 1):
                         if j > 2 and j <= 2 + self.last_day:
+                            day = j - 2
+                            val = self._drag_val
+                            
+                            # Проверяем и меняем 8 на 7 при растягивании
+                            if val == "8" and auto_7h:
+                                if (day + 1) in holidays and date(self.year, self.month, day).weekday() < 5:
+                                    val = "7"
+                            
                             item = self.table.item(r, j)
-                            item.setText(self._drag_val)
-                            self._apply_item_color(item, self._drag_val)
+                            item.setText(val)
+                            self._apply_item_color(item, val)
+                            self.data["rows"][r-2]["cells"][day] = val
                     
                     self.table.blockSignals(False)
                     self.is_modified = True
                     
                     if r > 1 and not self.manual_mode:
                         row_data = self.data["rows"][r-2]
-                        for j in range(min_c, max_c + 1):
-                            if j > 2 and j <= 2 + self.last_day:
-                                row_data["cells"][j-2] = self._drag_val
                         res = self._calculate(row_data)
                         for k, key in enumerate(self.summary_keys):
                             col = 3 + self.last_day + k
@@ -609,17 +623,28 @@ class DocumentWidget(QDialog):
             self._save_undo()
             self.table.blockSignals(True)
             
+            _, holidays_str = get_year_month(self.year, self.month)
+            holidays = set(int(x.strip()) for x in holidays_str.split(',') if x.strip().isdigit())
+            
             for r in range(rng.topRow(), rng.bottomRow() + 1):
                 pattern = []
                 for c in range(rng.leftColumn(), rng.leftColumn() + 4):
                     pattern.append(self.table.item(r, c).text())
                 
+                auto_7h = self.data["rows"][r-2].get("auto_7h", False) if r >= 2 else False
+                
                 for c in range(rng.leftColumn() + 4, 3 + self.last_day):
                     val = pattern[(c - rng.leftColumn()) % 4]
+                    day = c - 2
+                    
+                    if val == "8" and auto_7h:
+                        if (day + 1) in holidays and date(self.year, self.month, day).weekday() < 5:
+                            val = "7"
+                            
                     item = self.table.item(r, c)
                     item.setText(val)
                     self._apply_item_color(item, val)
-                    self.data["rows"][r-2]["cells"][c-2] = val
+                    self.data["rows"][r-2]["cells"][day] = val
             
             self.table.blockSignals(False)
             
