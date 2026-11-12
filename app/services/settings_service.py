@@ -31,7 +31,6 @@ def get_weekend_color():
 
 
 def get_all_colors():
-    # Возвращает словарь: {'В': '#FFE0B2', '15': '#FFFFFF', ...}
     raw = get_setting("code_colors", "{}")
     try:
         return json.loads(raw)
@@ -43,10 +42,6 @@ def set_code_color(code, color):
     colors = get_all_colors()
     colors[code] = color
     set_setting("code_colors", json.dumps(colors))
-
-
-def use_7h_enabled():
-    return get_setting("use_7h", "1") == "1"
 
 
 def get_year_month(year, month):
