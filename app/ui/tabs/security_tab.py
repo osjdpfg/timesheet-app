@@ -13,6 +13,21 @@ from ...services.settings_service import list_years
 from ..widgets.document_widget import DocumentWidget
 
 
+class DocItemWidget(QWidget):
+    def __init__(self, text, on_restore):
+        super().__init__()
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(5, 5, 5, 5)
+        self.label = QLabel(text)
+        self.btn = QPushButton("Развернуть")
+        self.btn.setStyleSheet("background-color: #1E88E5; color: white; font-weight: bold; border-radius: 3px; padding: 2px 10px;")
+        self.btn.clicked.connect(on_restore)
+        self.btn.hide()
+        layout.addWidget(self.label)
+        layout.addStretch()
+        layout.addWidget(self.btn)
+
+
 class NewDocumentDialog(QDialog):
     def __init__(self, group, doc_type, parent=None):
         super().__init__(parent)
@@ -22,8 +37,6 @@ class NewDocumentDialog(QDialog):
         self.doc_type = doc_type
 
         lay = QVBoxLayout(self)
-        
-        # Используем сетку для идеального выравнивания
         grid = QGridLayout()
         
         grid.addWidget(QLabel("Месяц:"), 0, 0)
@@ -36,8 +49,7 @@ class NewDocumentDialog(QDialog):
         self.year_combo = QComboBox()
         years = list_years()
         if not years:
-            QMessageBox.warning(self, "Нет годов",
-                                "Сначала добавьте год в разделе «Общие настройки»")
+            QMessageBox.warning(self, "Нет годов", "Сначала добавьте год в разделе «Общие настройки»")
             self.reject()
             return
         for y in years:
@@ -59,11 +71,9 @@ class NewDocumentDialog(QDialog):
                 suffix = f" ({inst})" if inst > 0 else ""
                 self.schedule_combo.addItem(f"{MONTHS_RU[mn - 1]} {yr}{suffix}", did)
             
-            # Растягиваем комбобокс на 3 колонки (под месяц, год и пустое место)
             grid.addWidget(self.schedule_combo, 1, 1, 1, 3)
 
         lay.addLayout(grid)
-
         lay.addWidget(QLabel("Сотрудники:"))
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(["", "ФИО", "Должность"])
@@ -147,9 +157,10 @@ class OpenPreviousDialog(QDialog):
 class SecurityTab(QWidget):
     def __init__(self):
         super().__init__()
-        self.open_windows = []
+        self.windows = {}
+        self.list_widgets = {}
+        
         lay = QVBoxLayout(self)
-
         tools = QHBoxLayout()
         b1 = QPushButton("Новый график")
         b1.clicked.connect(lambda: self.new_doc("schedule"))
@@ -173,13 +184,55 @@ class SecurityTab(QWidget):
 
     def refresh(self):
         self.list_widget.clear()
+        self.list_widgets.clear()
+        
         for d in list_documents(group="security"):
             did, dt, grp, yr, mn, inst = d
             title = "График" if dt == "schedule" else "Табель"
             suffix = f" ({inst})" if inst > 0 else ""
-            item = QListWidgetItem(f"{title} за {MONTHS_RU[mn - 1]} {yr}{suffix}")
+            title_text = f"{title} за {MONTHS_RU[mn - 1]} {yr}{suffix}"
+            
+            item = QListWidgetItem(self.list_widget)
             item.setData(0x100, did)
-            self.list_widget.addItem(item)
+            
+            w = DocItemWidget(title_text, lambda checked, d_id=did: self.restore_doc(d_id))
+            
+            if did in self.windows and self.windows[did].isHidden():
+                w.btn.show()
+
+            self.list_widget.setItemWidget(item, w)
+            self.list_widgets[did] = w
+
+    def open_doc(self, doc_id):
+        if doc_id in self.windows:
+            self.restore_doc(doc_id)
+            return
+            
+        w = DocumentWidget(doc_id, self)
+        self.windows[doc_id] = w
+        w.minimized_signal.connect(lambda d=doc_id: self.on_window_minimized(d))
+        w.restored_signal.connect(lambda d=doc_id: self.on_window_restored(d))
+        w.finished.connect(lambda: self.clean_window(doc_id))
+        w.show()
+
+    def restore_doc(self, doc_id):
+        if doc_id in self.windows:
+            w = self.windows[doc_id]
+            w.restore_window()
+
+    def on_window_minimized(self, doc_id):
+        if doc_id in self.list_widgets:
+            self.list_widgets[doc_id].btn.show()
+
+    def on_window_restored(self, doc_id):
+        if doc_id in self.list_widgets:
+            self.list_widgets[doc_id].btn.hide()
+
+    def clean_window(self, doc_id):
+        if doc_id in self.windows:
+            del self.windows[doc_id]
+        if doc_id in self.list_widgets:
+            self.list_widgets[doc_id].btn.hide()
 
     def new_doc(self, doc_type):
         d = NewDocumentDialog("security", doc_type, self)
@@ -202,36 +255,29 @@ class SecurityTab(QWidget):
 
             doc_id = create_document(doc_type, "security", year, month, employees, source)
             self.refresh()
-            w = DocumentWidget(doc_id, self)
-            w.show()
-            self.open_windows.append(w)
-            w.finished.connect(lambda: self.open_windows.remove(w) if w in self.open_windows else None)
+            self.open_doc(doc_id)
 
     def open_selected(self):
         item = self.list_widget.currentItem()
         if not item:
             return
-        w = DocumentWidget(item.data(0x100), self)
-        w.show()
-        self.open_windows.append(w)
-        w.finished.connect(lambda: self.open_windows.remove(w) if w in self.open_windows else None)
-        self.refresh()
+        doc_id = item.data(0x100)
+        self.open_doc(doc_id)
 
     def open_previous(self):
         d = OpenPreviousDialog("security", self)
         if d.exec():
             doc_id = d.get_selected_doc_id()
             if doc_id:
-                w = DocumentWidget(doc_id, self)
-                w.show()
-                self.open_windows.append(w)
-                w.finished.connect(lambda: self.open_windows.remove(w) if w in self.open_windows else None)
-                self.refresh()
+                self.open_doc(doc_id)
 
     def delete_selected(self):
         item = self.list_widget.currentItem()
         if not item:
             return
+        doc_id = item.data(0x100)
         if QMessageBox.question(self, "Удалить", "Удалить документ?") == QMessageBox.Yes:
-            delete_document(item.data(0x100))
+            if doc_id in self.windows:
+                self.windows[doc_id].close()
+            delete_document(doc_id)
             self.refresh()
