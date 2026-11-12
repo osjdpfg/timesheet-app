@@ -56,7 +56,6 @@ def update_document_structure(doc_id, new_year, new_month, employees):
         doc.year = new_year
         doc.month = new_month
         
-        # Синхронизация строк самого документа
         existing_rows = { (r.employee_name, r.employee_position): r for r in doc.rows }
         new_rows = []
         
@@ -76,7 +75,6 @@ def update_document_structure(doc_id, new_year, new_month, employees):
         for row in existing_rows.values():
             s.delete(row)
             
-        # Если это график, обновляем привязанный табель
         if doc.doc_type == "schedule":
             timesheets = s.query(Document).filter_by(linked_schedule_id=doc.id).all()
             for ts in timesheets:
@@ -95,8 +93,10 @@ def update_document_structure(doc_id, new_year, new_month, employees):
                         ts_row = DocumentRow(document_id=ts.id, employee_name=row.employee_name, employee_position=row.employee_position, auto_7h=row.auto_7h)
                         s.add(ts_row)
                         s.flush()
+                        # КОПИРУЕМ ЯЧЕЙКИ из графика для нового сотрудника
+                        src_cells = {c.day: c.code for c in row.cells}
                         for day in range(1, 32):
-                            s.add(DocumentCell(row_id=ts_row.id, day=day, code=""))
+                            s.add(DocumentCell(row_id=ts_row.id, day=day, code=src_cells.get(day, "")))
                         ts_new_rows.append(ts_row)
                 
                 for ts_row in ts_existing.values():
@@ -168,6 +168,8 @@ def save_document(doc_id, rows_data, manual_mode):
         if not d:
             return
         d.manual_mode = manual_mode
+        
+        # 1. Сохраняем сам документ
         for rd in rows_data:
             row = s.get(DocumentRow, rd["id"])
             if not row:
@@ -187,6 +189,32 @@ def save_document(doc_id, rows_data, manual_mode):
                     omap[key].value = val
                 else:
                     s.add(ManualOverride(row_id=row.id, column_key=key, value=val))
+                    
+        s.flush()
+        
+        # 2. Если это график, синхронизируем данные с привязанными табелями
+        if d.doc_type == "schedule":
+            timesheets = s.query(Document).filter_by(linked_schedule_id=doc_id).all()
+            for ts in timesheets:
+                if ts.manual_mode:
+                    continue # Не трогаем табель, если он в ручном режиме
+                    
+                ts_rows = { (r.employee_name, r.employee_position): r for r in ts.rows }
+                
+                for rd in rows_data:
+                    sched_row = s.get(DocumentRow, rd["id"])
+                    if not sched_row: continue
+                    
+                    key = (sched_row.employee_name, sched_row.employee_position)
+                    if key in ts_rows:
+                        ts_row = ts_rows[key]
+                        ts_cmap = {c.day: c for c in ts_row.cells}
+                        for day, code in rd["cells"].items():
+                            if day in ts_cmap:
+                                ts_cmap[day].code = code
+                            else:
+                                s.add(DocumentCell(row_id=ts_row.id, day=day, code=code))
+                                
         s.commit()
     finally:
         s.close()
