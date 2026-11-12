@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                                 QAbstractItemView, QWidget, QGridLayout, QCheckBox,
                                 QDialogButtonBox)
 from PySide6.QtGui import QColor, QBrush, QFont, QKeyEvent, QKeySequence, QPalette
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal, QEvent
 
 from ...config import MONTHS_RU, WEEKDAYS_RU
 from ...core.calculations import (calc_security_schedule,
@@ -104,11 +104,15 @@ class EditDocumentDialog(QDialog):
 
 
 class DocumentWidget(QDialog):
+    minimized_signal = Signal()
+    restored_signal = Signal()
+
     def __init__(self, doc_id, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WA_DeleteOnClose)
-        self.is_modified = False
+        self.setWindowFlags(Qt.Window | Qt.WindowMinimizeButtonHint | Qt.WindowCloseButtonHint | Qt.WindowMaximizeButtonHint)
         
+        self.is_modified = False
         self._drag_start = None
         self._drag_val = ""
         self.undo_stack = []
@@ -226,6 +230,20 @@ class DocumentWidget(QDialog):
 
         self._build_table()
         self._update_manual_ui()
+
+    def changeEvent(self, event):
+        if event.type() == QEvent.WindowStateChange:
+            if self.windowState() & Qt.WindowMinimized:
+                self.hide()
+                self.minimized_signal.emit()
+            elif event.oldState() & Qt.WindowMinimized:
+                self.restored_signal.emit()
+        super().changeEvent(event)
+        
+    def restore_window(self):
+        self.showNormal()
+        self.activateWindow()
+        self.raise_()
 
     def _update_title(self):
         inst_num = self.data.get("instance_number", 0)
@@ -349,7 +367,6 @@ class DocumentWidget(QDialog):
             self.table.setItem(0, col, it)
             self.table.setSpan(0, col, 2, 1)
 
-        # Получаем праздники и глобальную настройку
         _, holidays_str = get_year_month(self.year, self.month)
         holidays = set(int(x.strip()) for x in holidays_str.split(',') if x.strip().isdigit())
         use_7h = use_7h_enabled()
@@ -386,9 +403,8 @@ class DocumentWidget(QDialog):
             self.table.setItem(gr, 2, pos_item)
             
             for d in range(1, n_days + 1):
-                code = row["cells"].get(d, "")
+                code = row["cells"].get(d, "").upper()
                 
-                # Замена 8 на 7 (если включена галочка ИЛИ глобальная настройка)
                 if code == "8" and (use_7h or row.get("auto_7h", False)):
                     if (d + 1) in holidays and date(self.year, self.month, d).weekday() < 5:
                         code = "7"
@@ -545,7 +561,14 @@ class DocumentWidget(QDialog):
         use_7h = use_7h_enabled()
 
         if 3 <= c <= 2 + n_days:
-            code = item.text()
+            original_text = item.text()
+            upper_text = original_text.upper()
+            if upper_text != original_text:
+                self.table.blockSignals(True)
+                item.setText(upper_text)
+                self.table.blockSignals(False)
+
+            code = upper_text
             day = c - 2
             
             if code == "8" and (use_7h or self.data["rows"][r_idx].get("auto_7h", False)):
@@ -650,7 +673,7 @@ class DocumentWidget(QDialog):
         self._build_table()
 
     def apply_code_to_selected(self):
-        code = self.code_combo.currentText()
+        code = self.code_combo.currentText().upper()
         n_days = self.last_day
         use_7h = use_7h_enabled()
         self._save_undo()
