@@ -28,7 +28,6 @@ class TransportTab(QWidget):
         lay.addLayout(tools)
 
         self.list_widget = QListWidget()
-        self.list_widget.itemDoubleClicked.connect(self.open_selected)
         lay.addWidget(self.list_widget)
         self.refresh()
 
@@ -41,15 +40,21 @@ class TransportTab(QWidget):
             suffix = f" ({inst})" if inst > 0 else ""
             title_text = f"Табель за {MONTHS_RU[mn - 1]} {yr}{suffix}"
             
-            item = QListWidgetItem(self.list_widget)
+            item = QListWidgetItem(title_text)
             item.setData(0x100, did)
+            self.list_widget.addItem(item)
             
-            w = DocItemWidget(title_text, lambda checked, d_id=did: self.restore_doc(d_id))
+            w = DocItemWidget(
+                title_text, 
+                lambda checked, d_id=did: self.restore_doc(d_id),
+                lambda d_id=did: self.open_doc(d_id)
+            )
             
             if did in self.windows and self.windows[did].isHidden():
                 w.btn.show()
 
             self.list_widget.setItemWidget(item, w)
+            item.setSizeHint(w.sizeHint())
             self.list_widgets[did] = w
 
     def open_doc(self, doc_id):
@@ -126,6 +131,9 @@ class TransportTab(QWidget):
         doc_id = item.data(0x100)
         if QMessageBox.question(self, "Удалить", "Удалить документ?") == QMessageBox.Yes:
             if doc_id in self.windows:
-                self.windows[doc_id].close()
+                w = self.windows[doc_id]
+                w.is_modified = False
+                w.close()
+                del self.windows[doc_id]
             delete_document(doc_id)
             self.refresh()
