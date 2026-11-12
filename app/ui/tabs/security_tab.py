@@ -14,18 +14,29 @@ from ..widgets.document_widget import DocumentWidget
 
 
 class DocItemWidget(QWidget):
-    def __init__(self, text, on_restore):
+    def __init__(self, text, on_restore, on_open):
         super().__init__()
         layout = QHBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
+        
         self.label = QLabel(text)
+        # Делаем текст прозрачным для кликов, чтобы двойной клик доходил до списка
+        self.label.setAttribute(Qt.WA_TransparentForMouseEvents) 
+        
         self.btn = QPushButton("Развернуть")
         self.btn.setStyleSheet("background-color: #1E88E5; color: white; font-weight: bold; border-radius: 3px; padding: 2px 10px;")
         self.btn.clicked.connect(on_restore)
         self.btn.hide()
+        
         layout.addWidget(self.label)
         layout.addStretch()
         layout.addWidget(self.btn)
+        
+        self.on_open = on_open
+
+    def mouseDoubleClickEvent(self, event):
+        self.on_open()
+        super().mouseDoubleClickEvent(event)
 
 
 class NewDocumentDialog(QDialog):
@@ -178,7 +189,6 @@ class SecurityTab(QWidget):
         lay.addLayout(tools)
 
         self.list_widget = QListWidget()
-        self.list_widget.itemDoubleClicked.connect(self.open_selected)
         lay.addWidget(self.list_widget)
         self.refresh()
 
@@ -192,15 +202,21 @@ class SecurityTab(QWidget):
             suffix = f" ({inst})" if inst > 0 else ""
             title_text = f"{title} за {MONTHS_RU[mn - 1]} {yr}{suffix}"
             
-            item = QListWidgetItem(self.list_widget)
+            item = QListWidgetItem(title_text)
             item.setData(0x100, did)
+            self.list_widget.addItem(item)
             
-            w = DocItemWidget(title_text, lambda checked, d_id=did: self.restore_doc(d_id))
+            w = DocItemWidget(
+                title_text, 
+                lambda checked, d_id=did: self.restore_doc(d_id),
+                lambda d_id=did: self.open_doc(d_id)
+            )
             
             if did in self.windows and self.windows[did].isHidden():
                 w.btn.show()
 
             self.list_widget.setItemWidget(item, w)
+            item.setSizeHint(w.sizeHint()) # КРИТИЧЕСКИ ВАЖНО для правильной высоты
             self.list_widgets[did] = w
 
     def open_doc(self, doc_id):
@@ -278,6 +294,9 @@ class SecurityTab(QWidget):
         doc_id = item.data(0x100)
         if QMessageBox.question(self, "Удалить", "Удалить документ?") == QMessageBox.Yes:
             if doc_id in self.windows:
-                self.windows[doc_id].close()
+                w = self.windows[doc_id]
+                w.is_modified = False # Отключаем запрос на сохранение при удалении
+                w.close()
+                del self.windows[doc_id]
             delete_document(doc_id)
             self.refresh()
