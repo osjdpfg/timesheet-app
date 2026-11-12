@@ -234,7 +234,7 @@ class DocumentWidget(QDialog):
     def changeEvent(self, event):
         if event.type() == QEvent.WindowStateChange:
             if self.windowState() & Qt.WindowMinimized:
-                self.hide()
+                self.hide() # Скрываем из панели задач
                 self.minimized_signal.emit()
             elif event.oldState() & Qt.WindowMinimized:
                 self.restored_signal.emit()
