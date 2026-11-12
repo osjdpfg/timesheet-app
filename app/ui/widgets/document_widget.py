@@ -349,6 +349,11 @@ class DocumentWidget(QDialog):
             self.table.setItem(0, col, it)
             self.table.setSpan(0, col, 2, 1)
 
+        # Получаем праздники и глобальную настройку
+        _, holidays_str = get_year_month(self.year, self.month)
+        holidays = set(int(x.strip()) for x in holidays_str.split(',') if x.strip().isdigit())
+        use_7h = use_7h_enabled()
+
         for r_idx, row in enumerate(self.data["rows"]):
             gr = r_idx + 2
             
@@ -382,6 +387,13 @@ class DocumentWidget(QDialog):
             
             for d in range(1, n_days + 1):
                 code = row["cells"].get(d, "")
+                
+                # Замена 8 на 7 (если включена галочка ИЛИ глобальная настройка)
+                if code == "8" and (use_7h or row.get("auto_7h", False)):
+                    if (d + 1) in holidays and date(self.year, self.month, d).weekday() < 5:
+                        code = "7"
+                        row["cells"][d] = "7"
+                
                 it = QTableWidgetItem(code)
                 it.setTextAlignment(Qt.AlignCenter)
                 self._apply_item_color(it, code)
@@ -530,15 +542,16 @@ class DocumentWidget(QDialog):
 
         r_idx = r - 2
         n_days = self.last_day
+        use_7h = use_7h_enabled()
 
         if 3 <= c <= 2 + n_days:
             code = item.text()
             day = c - 2
             
-            if code == "8" and self.data["rows"][r_idx].get("auto_7h", False):
+            if code == "8" and (use_7h or self.data["rows"][r_idx].get("auto_7h", False)):
                 _, holidays_str = get_year_month(self.year, self.month)
                 holidays = set(int(x.strip()) for x in holidays_str.split(',') if x.strip().isdigit())
-                if (day + 1) in holidays:
+                if (day + 1) in holidays and date(self.year, self.month, day).weekday() < 5:
                     code = "7"
                     self.table.blockSignals(True)
                     item.setText("7")
@@ -639,6 +652,7 @@ class DocumentWidget(QDialog):
     def apply_code_to_selected(self):
         code = self.code_combo.currentText()
         n_days = self.last_day
+        use_7h = use_7h_enabled()
         self._save_undo()
         self.table.blockSignals(True)
         for idx in self.table.selectedIndexes():
@@ -649,10 +663,10 @@ class DocumentWidget(QDialog):
             day = c - 2
             
             final_code = code
-            if code == "8" and self.data["rows"][r].get("auto_7h", False):
+            if code == "8" and (use_7h or self.data["rows"][r].get("auto_7h", False)):
                 _, holidays_str = get_year_month(self.year, self.month)
                 holidays = set(int(x.strip()) for x in holidays_str.split(',') if x.strip().isdigit())
-                if (day + 1) in holidays:
+                if (day + 1) in holidays and date(self.year, self.month, day).weekday() < 5:
                     final_code = "7"
 
             self.data["rows"][r]["cells"][day] = final_code
