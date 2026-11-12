@@ -1,8 +1,7 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-                                QListWidget, QListWidgetItem, QMessageBox,
-                                QDialog, QComboBox, QLabel, QTableWidget,
-                                QTableWidgetItem, QCheckBox, QDialogButtonBox,
-                                QGridLayout)
+                                QTableWidget, QTableWidgetItem, QMessageBox,
+                                QDialog, QComboBox, QLabel, QCheckBox, QDialogButtonBox,
+                                QGridLayout, QHeaderView)
 from PySide6.QtCore import Qt
 
 from ...config import MONTHS_RU
@@ -11,32 +10,6 @@ from ...services.document_service import (create_document, list_documents,
                                            delete_document)
 from ...services.settings_service import list_years
 from ..widgets.document_widget import DocumentWidget
-
-
-class DocItemWidget(QWidget):
-    def __init__(self, text, on_restore, on_open):
-        super().__init__()
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(5, 5, 5, 5)
-        
-        self.label = QLabel(text)
-        # Делаем текст прозрачным для кликов, чтобы двойной клик доходил до списка
-        self.label.setAttribute(Qt.WA_TransparentForMouseEvents) 
-        
-        self.btn = QPushButton("Развернуть")
-        self.btn.setStyleSheet("background-color: #1E88E5; color: white; font-weight: bold; border-radius: 3px; padding: 2px 10px;")
-        self.btn.clicked.connect(on_restore)
-        self.btn.hide()
-        
-        layout.addWidget(self.label)
-        layout.addStretch()
-        layout.addWidget(self.btn)
-        
-        self.on_open = on_open
-
-    def mouseDoubleClickEvent(self, event):
-        self.on_open()
-        super().mouseDoubleClickEvent(event)
 
 
 class NewDocumentDialog(QDialog):
@@ -169,7 +142,6 @@ class SecurityTab(QWidget):
     def __init__(self):
         super().__init__()
         self.windows = {}
-        self.list_widgets = {}
         
         lay = QVBoxLayout(self)
         tools = QHBoxLayout()
@@ -188,36 +160,61 @@ class SecurityTab(QWidget):
         tools.addStretch()
         lay.addLayout(tools)
 
-        self.list_widget = QListWidget()
-        lay.addWidget(self.list_widget)
+        self.table = QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(["Документ", "Статус", ""])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.table.setColumnWidth(1, 100)
+        self.table.setColumnWidth(2, 120)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SingleSelection)
+        self.table.cellDoubleClicked.connect(self.open_selected)
+        
+        lay.addWidget(self.table)
         self.refresh()
 
     def refresh(self):
-        self.list_widget.clear()
-        self.list_widgets.clear()
-        
+        self.table.setRowCount(0)
         for d in list_documents(group="security"):
             did, dt, grp, yr, mn, inst = d
             title = "График" if dt == "schedule" else "Табель"
             suffix = f" ({inst})" if inst > 0 else ""
             title_text = f"{title} за {MONTHS_RU[mn - 1]} {yr}{suffix}"
             
-            item = QListWidgetItem(title_text)
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            
+            item = QTableWidgetItem(title_text)
             item.setData(0x100, did)
-            self.list_widget.addItem(item)
+            self.table.setItem(row, 0, item)
             
-            w = DocItemWidget(
-                title_text, 
-                lambda checked, d_id=did: self.restore_doc(d_id),
-                lambda d_id=did: self.open_doc(d_id)
-            )
+            # Статус
+            status_item = QTableWidgetItem("Закрыт")
+            self.table.setItem(row, 1, status_item)
             
-            if did in self.windows and self.windows[did].isHidden():
-                w.btn.show()
+            # Кнопка
+            btn = QPushButton("Развернуть")
+            btn.setStyleSheet("background-color: #1E88E5; color: white; font-weight: bold; border-radius: 3px; padding: 4px;")
+            btn.setEnabled(False)
+            btn.clicked.connect(lambda checked, d_id=did: self.restore_doc(d_id))
+            self.table.setCellWidget(row, 2, btn)
 
-            self.list_widget.setItemWidget(item, w)
-            item.setSizeHint(w.sizeHint()) # КРИТИЧЕСКИ ВАЖНО для правильной высоты
-            self.list_widgets[did] = w
+    def update_row_status(self, doc_id):
+        for r in range(self.table.rowCount()):
+            item = self.table.item(r, 0)
+            if item and item.data(0x100) == doc_id:
+                w = self.windows.get(doc_id)
+                if w and w.isMinimized():
+                    self.table.item(r, 1).setText("Свернут")
+                    self.table.cellWidget(r, 2).setEnabled(True)
+                elif w:
+                    self.table.item(r, 1).setText("Открыт")
+                    self.table.cellWidget(r, 2).setEnabled(False)
+                else:
+                    self.table.item(r, 1).setText("Закрыт")
+                    self.table.cellWidget(r, 2).setEnabled(False)
+                break
 
     def open_doc(self, doc_id):
         if doc_id in self.windows:
@@ -226,29 +223,21 @@ class SecurityTab(QWidget):
             
         w = DocumentWidget(doc_id, self)
         self.windows[doc_id] = w
-        w.minimized_signal.connect(lambda d=doc_id: self.on_window_minimized(d))
-        w.restored_signal.connect(lambda d=doc_id: self.on_window_restored(d))
+        w.minimized_signal.connect(lambda: self.update_row_status(doc_id))
+        w.restored_signal.connect(lambda: self.update_row_status(doc_id))
         w.finished.connect(lambda: self.clean_window(doc_id))
         w.show()
+        self.update_row_status(doc_id)
 
     def restore_doc(self, doc_id):
         if doc_id in self.windows:
             w = self.windows[doc_id]
             w.restore_window()
 
-    def on_window_minimized(self, doc_id):
-        if doc_id in self.list_widgets:
-            self.list_widgets[doc_id].btn.show()
-
-    def on_window_restored(self, doc_id):
-        if doc_id in self.list_widgets:
-            self.list_widgets[doc_id].btn.hide()
-
     def clean_window(self, doc_id):
         if doc_id in self.windows:
             del self.windows[doc_id]
-        if doc_id in self.list_widgets:
-            self.list_widgets[doc_id].btn.hide()
+        self.update_row_status(doc_id)
 
     def new_doc(self, doc_type):
         d = NewDocumentDialog("security", doc_type, self)
@@ -273,12 +262,11 @@ class SecurityTab(QWidget):
             self.refresh()
             self.open_doc(doc_id)
 
-    def open_selected(self):
-        item = self.list_widget.currentItem()
-        if not item:
-            return
-        doc_id = item.data(0x100)
-        self.open_doc(doc_id)
+    def open_selected(self, row, col):
+        if col == 2: return
+        item = self.table.item(row, 0)
+        if not item: return
+        self.open_doc(item.data(0x100))
 
     def open_previous(self):
         d = OpenPreviousDialog("security", self)
@@ -288,14 +276,13 @@ class SecurityTab(QWidget):
                 self.open_doc(doc_id)
 
     def delete_selected(self):
-        item = self.list_widget.currentItem()
-        if not item:
-            return
-        doc_id = item.data(0x100)
+        row = self.table.currentRow()
+        if row < 0: return
+        doc_id = self.table.item(row, 0).data(0x100)
         if QMessageBox.question(self, "Удалить", "Удалить документ?") == QMessageBox.Yes:
             if doc_id in self.windows:
                 w = self.windows[doc_id]
-                w.is_modified = False # Отключаем запрос на сохранение при удалении
+                w.is_modified = False
                 w.close()
                 del self.windows[doc_id]
             delete_document(doc_id)
