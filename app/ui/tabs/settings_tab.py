@@ -6,7 +6,6 @@ from PySide6.QtGui import QColor
 from PySide6.QtCore import Qt
 from ...services.settings_service import (list_years, add_year, delete_year,
                                            update_month, get_year_month,
-                                           get_setting, set_setting,
                                            get_all_colors, set_code_color)
 from ...config import MONTHS_RU
 from ...core.designations import DESIGNATIONS
@@ -30,13 +29,6 @@ class SettingsTab(QWidget):
         btn_del = QPushButton("Удалить год")
         btn_del.clicked.connect(self.delete_year_clicked)
         top.addWidget(btn_del)
-
-        top.addSpacing(20)
-        top.addWidget(QLabel("Предпраздничный:"))
-        self.hour_mode = QComboBox()
-        self.hour_mode.addItems(["Считать 8 часов", "Считать 7 часов"])
-        self.hour_mode.currentIndexChanged.connect(self.save_hour_mode)
-        top.addWidget(self.hour_mode)
 
         top.addStretch()
         lay.addLayout(top)
@@ -69,11 +61,9 @@ class SettingsTab(QWidget):
         color_group.setLayout(color_layout)
         lay.addWidget(color_group)
 
-        # Создаем один экземпляр QColorDialog, чтобы палитра кастомных цветов сохранялась
         self.color_dialog = QColorDialog(self)
         self.color_dialog.setOption(QColorDialog.DontUseNativeDialog, True)
 
-        self.load_hour_mode()
         self.refresh_years()
         self.update_color_buttons()
 
@@ -106,8 +96,6 @@ class SettingsTab(QWidget):
     def pick_code_color(self, code):
         colors = get_all_colors()
         self.color_dialog.setCurrentColor(QColor(colors.get(code, "#FFFFFF")))
-        
-        # Открываем диалог. Теперь кастомные цвета будут сохраняться между открытиями
         if self.color_dialog.exec():
             c = self.color_dialog.currentColor()
             set_code_color(code, c.name())
@@ -170,12 +158,3 @@ class SettingsTab(QWidget):
         if r == QMessageBox.Yes:
             delete_year(year)
             self.refresh_years()
-
-    def load_hour_mode(self):
-        v = get_setting("use_7h", "1")
-        self.hour_mode.blockSignals(True)
-        self.hour_mode.setCurrentIndex(1 if v == "1" else 0)
-        self.hour_mode.blockSignals(False)
-
-    def save_hour_mode(self):
-        set_setting("use_7h", "1" if self.hour_mode.currentIndex() == 1 else "0")
