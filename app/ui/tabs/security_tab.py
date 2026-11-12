@@ -1,7 +1,7 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                                 QTableWidget, QTableWidgetItem, QMessageBox,
                                 QDialog, QComboBox, QLabel, QCheckBox, QDialogButtonBox,
-                                QGridLayout, QHeaderView)
+                                QGridLayout, QHeaderView, QListWidget, QListWidgetItem)
 from PySide6.QtCore import Qt
 
 from ...config import MONTHS_RU
@@ -189,11 +189,9 @@ class SecurityTab(QWidget):
             item.setData(0x100, did)
             self.table.setItem(row, 0, item)
             
-            # Статус
             status_item = QTableWidgetItem("Закрыт")
             self.table.setItem(row, 1, status_item)
             
-            # Кнопка
             btn = QPushButton("Развернуть")
             btn.setStyleSheet("background-color: #1E88E5; color: white; font-weight: bold; border-radius: 3px; padding: 4px;")
             btn.setEnabled(False)
@@ -205,14 +203,14 @@ class SecurityTab(QWidget):
             item = self.table.item(r, 0)
             if item and item.data(0x100) == doc_id:
                 w = self.windows.get(doc_id)
-                if w and w.isMinimized():
+                if w is None:
+                    self.table.item(r, 1).setText("Закрыт")
+                    self.table.cellWidget(r, 2).setEnabled(False)
+                elif w.isMinimized() or w.isHidden():
                     self.table.item(r, 1).setText("Свернут")
                     self.table.cellWidget(r, 2).setEnabled(True)
-                elif w:
-                    self.table.item(r, 1).setText("Открыт")
-                    self.table.cellWidget(r, 2).setEnabled(False)
                 else:
-                    self.table.item(r, 1).setText("Закрыт")
+                    self.table.item(r, 1).setText("Открыт")
                     self.table.cellWidget(r, 2).setEnabled(False)
                 break
 
@@ -223,9 +221,10 @@ class SecurityTab(QWidget):
             
         w = DocumentWidget(doc_id, self)
         self.windows[doc_id] = w
+        # Используем destroyed, так как он срабатывает 100% при закрытии
+        w.destroyed.connect(lambda _=None, d_id=doc_id: self.clean_window(d_id))
         w.minimized_signal.connect(lambda: self.update_row_status(doc_id))
         w.restored_signal.connect(lambda: self.update_row_status(doc_id))
-        w.finished.connect(lambda: self.clean_window(doc_id))
         w.show()
         self.update_row_status(doc_id)
 
@@ -284,6 +283,5 @@ class SecurityTab(QWidget):
                 w = self.windows[doc_id]
                 w.is_modified = False
                 w.close()
-                del self.windows[doc_id]
             delete_document(doc_id)
             self.refresh()
