@@ -27,7 +27,7 @@ def _proxy(row):
     p = _Row()
     p.employee_name = row["employee_name"]
     p.employee_position = row["employee_position"]
-    p.auto_7h = row.get("auto_7h", False) # <--- Передаем флаг
+    p.auto_7h = row.get("auto_7h", False)
     p.cells = [_Cell(d, c) for d, c in row["cells"].items()]
     return p
 
@@ -43,7 +43,6 @@ def export_document_to_excel(doc_id, path):
     doc_type = data["doc_type"]
     last_day = calendar.monthrange(year, month)[1]
     norm_hours, holidays = get_year_month(year, month)
-    use_7h = get_setting("use_7h", "1") == "1"
     weekend_color = get_setting("weekend_color", "#FFE0B2").replace("#", "")
     manual_mode = data["manual_mode"]
     
@@ -123,11 +122,11 @@ def export_document_to_excel(doc_id, path):
 
         proxy = _proxy(row)
         if doc_type == "schedule":
-            res = calc_security_schedule(proxy, year, month, norm_hours, holidays, use_7h)
+            res = calc_security_schedule(proxy, year, month, norm_hours, holidays)
         elif group == "security":
-            res = calc_security_timesheet(proxy, year, month, norm_hours, holidays, use_7h)
+            res = calc_security_timesheet(proxy, year, month, norm_hours, holidays)
         else:
-            res = calc_transport_timesheet(proxy, year, month, norm_hours, holidays, use_7h)
+            res = calc_transport_timesheet(proxy, year, month, norm_hours, holidays)
 
         for d in range(1, last_day + 1):
             col = 2 + d
@@ -148,7 +147,6 @@ def export_document_to_excel(doc_id, path):
 
         row_num += 1
 
-    # Блок подписи (без легенды)
     sig_name, sig_pos = get_signatory(group)
     if sig_name:
         row_num += 3
