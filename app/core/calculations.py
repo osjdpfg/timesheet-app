@@ -19,16 +19,19 @@ def _work_days_in_month(year, month):
     last = calendar.monthrange(year, month)[1]
     return [d for d in range(1, last + 1) if date(year, month, d).weekday() < 5]
 
-def _is_preholiday(day, holidays):
-    return (day + 1) in holidays
+def _is_preholiday(day, holidays, year, month):
+    # Предпраздничный день, если следующий день — праздник, И сам день выпадает на Пн-Пт
+    if (day + 1) not in holidays:
+        return False
+    return date(year, month, day).weekday() < 5
 
-def _norm_with_vacation(year, month, holidays, cells, use_7h, auto_7h, absence_codes=("О", "А")):
+def _calc_dynamic_norm(year, month, holidays, cells, use_7h, auto_7h, absence_codes=("О", "А")):
     norm = 0
     for d in _work_days_in_month(year, month):
         if cells.get(d, "") in absence_codes:
             continue
         h = 8
-        if (use_7h or auto_7h) and _is_preholiday(d, holidays):
+        if (use_7h or auto_7h) and _is_preholiday(d, holidays, year, month):
             h = 7
         norm += h
     return norm
@@ -39,14 +42,19 @@ def calc_security_schedule(row, year, month, norm_hours, holidays_str, use_7h):
     auto_7h = getattr(row, "auto_7h", False)
     
     fact = _count(cells, {"15", "9", "8", "7"})
+    
     total_hours = (_count(cells, {"15"}) * 15 + _count(cells, {"9"}) * 9 + 
                    _count(cells, {"8"}) * 8 + _count(cells, {"7"}) * 7)
-    vac = _count(cells, {"О"})
     
-    if vac > 0 or _count(cells, {"А"}) > 0:
-        norm = _norm_with_vacation(year, month, holidays, cells, use_7h, auto_7h)
+    vac = _count(cells, {"О"})
+    unpaid = _count(cells, {"А"})
+    
+    dynamic_norm = _calc_dynamic_norm(year, month, holidays, cells, use_7h, auto_7h)
+    if norm_hours == 0 or (use_7h or auto_7h) or vac > 0 or unpaid > 0:
+        norm = dynamic_norm
     else:
         norm = norm_hours
+        
     return {"Факт. работы": fact, "Отпуск": vac, "Всего": total_hours, "Норма": norm, "Ознакомлен": ""}
 
 def calc_security_timesheet(row, year, month, norm_hours, holidays_str, use_7h):
@@ -55,6 +63,7 @@ def calc_security_timesheet(row, year, month, norm_hours, holidays_str, use_7h):
     auto_7h = getattr(row, "auto_7h", False)
     
     fact = _count(cells, {"15", "9", "8", "7"})
+    
     total_hours = (_count(cells, {"15"}) * 15 + _count(cells, {"9"}) * 9 + 
                    _count(cells, {"8"}) * 8 + _count(cells, {"7"}) * 7)
     
@@ -76,8 +85,9 @@ def calc_security_timesheet(row, year, month, norm_hours, holidays_str, use_7h):
     progul = _count(cells, {"П"})
     unpaid = _count(cells, {"А"})
     
-    if vac > 0 or unpaid > 0:
-        norm = _norm_with_vacation(year, month, holidays, cells, use_7h, auto_7h)
+    dynamic_norm = _calc_dynamic_norm(year, month, holidays, cells, use_7h, auto_7h)
+    if norm_hours == 0 or (use_7h or auto_7h) or vac > 0 or unpaid > 0:
+        norm = dynamic_norm
     else:
         norm = norm_hours
         
@@ -112,6 +122,7 @@ def calc_transport_timesheet(row, year, month, norm_hours, holidays_str, use_7h)
     vac = _count(cells, {"О"})
     unpaid = _count(cells, {"А"})
     progul = _count(cells, {"П"}) * 8
+    
     fact_hours = 0
     for c in cells.values():
         if c in ("8", "Р"):
@@ -119,8 +130,9 @@ def calc_transport_timesheet(row, year, month, norm_hours, holidays_str, use_7h)
         elif c == "7":
             fact_hours += 7 if (use_7h or auto_7h) else 8
             
-    if vac > 0 or unpaid > 0:
-        norm = _norm_with_vacation(year, month, holidays, cells, use_7h, auto_7h)
+    dynamic_norm = _calc_dynamic_norm(year, month, holidays, cells, use_7h, auto_7h)
+    if norm_hours == 0 or (use_7h or auto_7h) or vac > 0 or unpaid > 0:
+        norm = dynamic_norm
     else:
         norm = norm_hours
         
