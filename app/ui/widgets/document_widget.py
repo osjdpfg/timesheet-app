@@ -16,9 +16,9 @@ from ...core.calculations import (calc_security_schedule,
                                    calc_security_timesheet,
                                    calc_transport_timesheet)
 from ...core.designations import DESIGNATIONS
-from ...services.settings_service import (get_year_month, use_7h_enabled,
-                                           get_weekend_color, get_all_colors,
-                                           get_setting, set_setting, list_years)
+from ...services.settings_service import (get_year_month, get_weekend_color,
+                                           get_all_colors, get_setting, set_setting,
+                                           list_years)
 from ...services.document_service import load_document, save_document
 from ...services.employee_service import list_employees
 from ...services.document_service import get_linked_timesheets, update_document_structure
@@ -234,7 +234,7 @@ class DocumentWidget(QDialog):
     def changeEvent(self, event):
         if event.type() == QEvent.WindowStateChange:
             if self.windowState() & Qt.WindowMinimized:
-                self.hide() # Скрываем из панели задач
+                self.hide() 
                 self.minimized_signal.emit()
             elif event.oldState() & Qt.WindowMinimized:
                 self.restored_signal.emit()
@@ -369,7 +369,6 @@ class DocumentWidget(QDialog):
 
         _, holidays_str = get_year_month(self.year, self.month)
         holidays = set(int(x.strip()) for x in holidays_str.split(',') if x.strip().isdigit())
-        use_7h = use_7h_enabled()
 
         for r_idx, row in enumerate(self.data["rows"]):
             gr = r_idx + 2
@@ -405,7 +404,7 @@ class DocumentWidget(QDialog):
             for d in range(1, n_days + 1):
                 code = row["cells"].get(d, "").upper()
                 
-                if code == "8" and (use_7h or row.get("auto_7h", False)):
+                if code == "8" and row.get("auto_7h", False):
                     if (d + 1) in holidays and date(self.year, self.month, d).weekday() < 5:
                         code = "7"
                         row["cells"][d] = "7"
@@ -540,13 +539,12 @@ class DocumentWidget(QDialog):
 
     def _calculate(self, row):
         norm_hours, holidays = get_year_month(self.year, self.month)
-        use_7h = use_7h_enabled()
         proxy = self._row_proxy(row)
         if self.doc_type == "schedule":
-            return calc_security_schedule(proxy, self.year, self.month, norm_hours, holidays, use_7h)
+            return calc_security_schedule(proxy, self.year, self.month, norm_hours, holidays)
         if self.group == "security":
-            return calc_security_timesheet(proxy, self.year, self.month, norm_hours, holidays, use_7h)
-        return calc_transport_timesheet(proxy, self.year, self.month, norm_hours, holidays, use_7h)
+            return calc_security_timesheet(proxy, self.year, self.month, norm_hours, holidays)
+        return calc_transport_timesheet(proxy, self.year, self.month, norm_hours, holidays)
 
     def on_item_changed(self, item):
         self._save_undo()
@@ -558,7 +556,6 @@ class DocumentWidget(QDialog):
 
         r_idx = r - 2
         n_days = self.last_day
-        use_7h = use_7h_enabled()
 
         if 3 <= c <= 2 + n_days:
             original_text = item.text()
@@ -571,7 +568,7 @@ class DocumentWidget(QDialog):
             code = upper_text
             day = c - 2
             
-            if code == "8" and (use_7h or self.data["rows"][r_idx].get("auto_7h", False)):
+            if code == "8" and self.data["rows"][r_idx].get("auto_7h", False):
                 _, holidays_str = get_year_month(self.year, self.month)
                 holidays = set(int(x.strip()) for x in holidays_str.split(',') if x.strip().isdigit())
                 if (day + 1) in holidays and date(self.year, self.month, day).weekday() < 5:
@@ -675,7 +672,6 @@ class DocumentWidget(QDialog):
     def apply_code_to_selected(self):
         code = self.code_combo.currentText().upper()
         n_days = self.last_day
-        use_7h = use_7h_enabled()
         self._save_undo()
         self.table.blockSignals(True)
         for idx in self.table.selectedIndexes():
@@ -686,7 +682,7 @@ class DocumentWidget(QDialog):
             day = c - 2
             
             final_code = code
-            if code == "8" and (use_7h or self.data["rows"][r].get("auto_7h", False)):
+            if code == "8" and self.data["rows"][r].get("auto_7h", False):
                 _, holidays_str = get_year_month(self.year, self.month)
                 holidays = set(int(x.strip()) for x in holidays_str.split(',') if x.strip().isdigit())
                 if (day + 1) in holidays and date(self.year, self.month, day).weekday() < 5:
